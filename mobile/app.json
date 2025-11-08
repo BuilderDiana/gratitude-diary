@@ -1,29 +1,37 @@
 {
   "expo": {
-    "name": "感恩日记",
+    "name": "thankly",
     "slug": "gratitude-diary",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
+    "updates": {
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
-      "resizeMode": "native",
+      "resizeMode": "contain",
       "backgroundColor": "#FAF6ED"
     },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.gratitudediary",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.stillkindailab.gratitudediary",
+      "buildNumber": "5",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "使用Face ID快速登录"
+        "NSMicrophoneUsageDescription": "We need microphone access for voice journaling.",
+        "NSFaceIDUsageDescription": "Use Face ID to sign in quickly.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#FAF6ED"
       },
-      "package": "com.yourcompany.gratitudediary"
+      "package": "com.stillkindailab.gratitudediary"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -33,7 +41,15 @@
       "expo-apple-authentication",
       "expo-secure-store",
       "expo-localization",
-      "expo-font"
-    ]
+      "expo-font",
+      "expo-asset",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2b3c207c-899e-45be-8e1f-ee728ea89faa"
+      }
+    },
+    "owner": "dianadeng"
   }
 }

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from datetime import datetime  # 用于健康检查的时间戳
-from .routers import diary, auth  # 新增 auth 路由
+from .routers import diary, auth, account  # 新增 auth 路由
 from .config import get_settings
 
 # 获取配置（延迟初始化，避免启动时失败）
@@ -77,10 +77,10 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
-# 配置CORS(允许前端跨域访问), CORS: Cross-Origin Resource Sharing,允许不同域名的网站访问API
+# 配置CORS(允许前端跨域访问)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 生产环境改成具体域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +92,13 @@ app.include_router(
     auth.router,
     prefix="/auth",
     tags=["认证"]
+)
+
+# 账号管理路由
+app.include_router(
+    account.router,
+    prefix="/account",
+    tags=["账号管理"]
 )
 
 # 日记路由

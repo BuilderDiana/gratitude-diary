@@ -13,7 +13,6 @@ import {
   Modal,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from "react-native";
 import { t } from "../i18n";
@@ -44,6 +43,23 @@ export default function VerificationCodeModal({
   const [countdown, setCountdown] = useState(0);
   const [isResending, setIsResending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const isEmailDestination = phoneNumber.includes("@");
+  const sentMessage = isEmailDestination
+    ? t("login.emailCodeSentMessage")
+    : t("login.codeSentMessage");
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    title: string;
+    message: string;
+  } | null>(null);
+
+  const showFeedback = (
+    type: "success" | "error",
+    title: string,
+    message: string
+  ) => {
+    setFeedback({ type, title, message });
+  };
 
   // 倒计时效果
   useEffect(() => {
@@ -66,9 +82,7 @@ export default function VerificationCodeModal({
   // 处理验证
   const handleVerify = async () => {
     if (!code.trim()) {
-      Alert.alert(t("login.codeSent"), t("login.enterCodeFirst"), [
-        { text: t("common.confirm") },
-      ]);
+      showFeedback("error", t("login.codeSent"), t("login.enterCodeFirst"));
       return;
     }
 
@@ -76,9 +90,11 @@ export default function VerificationCodeModal({
       setIsVerifying(true);
       await onVerify(code.trim());
     } catch (error: any) {
-      Alert.alert(t("login.codeSent"), error.message || "验证失败", [
-        { text: t("common.confirm") },
-      ]);
+      showFeedback(
+        "error",
+        t("login.codeSent"),
+        error.message || t("login.verificationFailed")
+      );
     } finally {
       setIsVerifying(false);
     }
@@ -95,13 +111,13 @@ export default function VerificationCodeModal({
       await onResend();
       setCountdown(60); // 重新开始倒计时
       setCode(""); // 清空验证码
-      Alert.alert(t("login.codeSent"), t("login.codeSentMessage"), [
-        { text: t("common.confirm") },
-      ]);
+      showFeedback("success", t("login.codeSent"), sentMessage);
     } catch (error: any) {
-      Alert.alert(t("login.codeSent"), error.message || "发送失败", [
-        { text: t("common.confirm") },
-      ]);
+      showFeedback(
+        "error",
+        t("login.codeSent"),
+        error.message || t("login.resendFailed")
+      );
     } finally {
       setIsResending(false);
     }
@@ -120,7 +136,7 @@ export default function VerificationCodeModal({
           <View style={styles.header}>
             <Text style={styles.title}>{t("login.verificationCode")}</Text>
             <Text style={styles.subtitle}>
-              {t("login.codeSentMessage")}
+              {sentMessage}
               {"\n"}
               {phoneNumber}
             </Text>
@@ -142,6 +158,7 @@ export default function VerificationCodeModal({
               accessibilityHint={t("accessibility.input.codeHint")}
               accessibilityRole="text"
               accessibilityState={{ disabled: isVerifying || isResending }}
+              placeholderTextColor="#B8ACA4"
             />
           </View>
 
@@ -168,7 +185,9 @@ export default function VerificationCodeModal({
               accessibilityLabel={t("login.verifyAndLogin")}
               accessibilityHint={t("accessibility.button.confirmHint")}
               accessibilityRole="button"
-              accessibilityState={{ disabled: isVerifying || isResending || !code.trim() }}
+              accessibilityState={{
+                disabled: isVerifying || isResending || !code.trim(),
+              }}
             >
               {isVerifying ? (
                 <ActivityIndicator color="#fff" />
@@ -186,12 +205,16 @@ export default function VerificationCodeModal({
             onPress={handleResend}
             disabled={isResending || countdown > 0}
             accessibilityLabel={t("login.resendCode")}
-            accessibilityHint={countdown > 0 ? t("login.countdown", { seconds: countdown }) : t("accessibility.button.continueHint")}
+            accessibilityHint={
+              countdown > 0
+                ? t("login.countdown", { seconds: countdown })
+                : t("accessibility.button.continueHint")
+            }
             accessibilityRole="button"
             accessibilityState={{ disabled: isResending || countdown > 0 }}
           >
             {isResending ? (
-              <ActivityIndicator size="small" color="#007AFF" />
+              <ActivityIndicator size="small" color="#E56C45" />
             ) : (
               <Text
                 style={[
@@ -205,6 +228,32 @@ export default function VerificationCodeModal({
               </Text>
             )}
           </TouchableOpacity>
+          {feedback ? (
+            <View style={styles.feedbackOverlay} pointerEvents="box-none">
+              <View
+                style={[
+                  styles.feedbackCard,
+                  feedback.type === "success"
+                    ? styles.feedbackCardSuccess
+                    : styles.feedbackCardError,
+                ]}
+                accessibilityLiveRegion="polite"
+              >
+                <Text style={styles.feedbackTitle}>{feedback.title}</Text>
+                <Text style={styles.feedbackMessage}>{feedback.message}</Text>
+                <TouchableOpacity
+                  style={styles.feedbackButton}
+                  onPress={() => setFeedback(null)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("common.confirm")}
+                >
+                  <Text style={styles.feedbackButtonText}>
+                    {t("common.confirm")}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -229,28 +278,29 @@ const styles = StyleSheet.create({
     maxWidth: 400,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 20,
     alignItems: "center",
   },
   title: {
     ...Typography.diaryTitle,
-    fontSize: 24,
+    fontSize: 20,
     color: "#1a1a1a",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
     ...Typography.body,
-    color: "#666",
+    fontSize: 14,
+    color: "#5A4B43",
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 18,
   },
   inputContainer: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "500",
-    color: "#1a1a1a",
+    color: "#4A3F38",
     marginBottom: 8,
   },
   input: {
@@ -258,12 +308,12 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: "#f8f9fa",
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "#E6D5C4",
     borderRadius: 12,
     paddingHorizontal: 16,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "600",
-    letterSpacing: 8,
+    letterSpacing: 2,
     textAlign: "center",
     color: "#1a1a1a",
   },
@@ -283,15 +333,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#f0f0f0",
   },
   cancelButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
-    color: "#666",
+    color: "#5A4B43",
   },
   verifyButton: {
-    backgroundColor: "#007AFF",
+    backgroundColor: "#E56C45",
+    shadowColor: "rgba(229, 108, 69, 0.35)",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 3,
   },
   verifyButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
     color: "#fff",
   },
@@ -300,12 +355,59 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   resendText: {
-    fontSize: 14,
-    color: "#007AFF",
+    fontSize: 13,
+    color: "#E56C45",
     fontWeight: "500",
   },
   resendTextDisabled: {
-    color: "#999",
+    color: "#B8ACA4",
+  },
+  feedbackOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.25)",
+  },
+  feedbackCard: {
+    width: "82%",
+    maxWidth: 320,
+    borderRadius: 18,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+  feedbackCardSuccess: {
+    backgroundColor: "#FFF5F1",
+  },
+  feedbackCardError: {
+    backgroundColor: "#FFEDEA",
+  },
+  feedbackTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#4A3F38",
+    marginBottom: 8,
+  },
+  feedbackMessage: {
+    fontSize: 14,
+    color: "#5A4B43",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  feedbackButton: {
+    backgroundColor: "#E56C45",
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  feedbackButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
   },
 });
-

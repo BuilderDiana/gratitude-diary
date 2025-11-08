@@ -8,6 +8,8 @@ S3文件上传服务
 
 import boto3
 from ..config import get_settings
+from urllib.parse import urlparse
+from typing import List
 import uuid
 from typing import BinaryIO
 
@@ -72,3 +74,53 @@ class S3Service:
         except Exception as e:
             print(f"❌ S3上传失败: {str(e)}")
             raise
+
+    def delete_objects_by_urls(self, urls: List[str]) -> None:
+        """根据URL删除对象"""
+        if not urls:
+            return
+
+        keys = []
+        for url in urls:
+            if not url:
+                continue
+
+            try:
+                parsed = urlparse(url)
+                # 兼容不同的 S3 URL 格式
+                path = parsed.path.lstrip('/')
+
+                if not path and parsed.netloc:
+                    # 尝试从自定义域名解析
+                    marker = f"{self.bucket_name}/"
+                    if marker in url:
+                        path = url.split(marker, 1)[1]
+
+                if not path:
+                    print(f"⚠️ 无法从URL解析S3路径: {url}")
+                    continue
+
+                keys.append(path)
+            except Exception as parse_error:
+                print(f"⚠️ 解析S3 URL失败: {url} - {parse_error}")
+
+        if not keys:
+            return
+
+        # S3 批量删除每次最多1000个对象
+        chunk_size = 1000
+        for i in range(0, len(keys), chunk_size):
+            chunk = keys[i : i + chunk_size]
+            try:
+                delete_payload = {
+                    'Objects': [{'Key': key} for key in chunk],
+                    'Quiet': True
+                }
+                self.s3_client.delete_objects(
+                    Bucket=self.bucket_name,
+                    Delete=delete_payload
+                )
+                print(f"🗑️ 已删除S3对象: {chunk}")
+            except Exception as delete_error:
+                print(f"❌ 删除S3对象失败: {delete_error}")
+                raise

@@ -9,6 +9,7 @@
  *
  */
 
+import { FA6Style } from "@expo/vector-icons/build/FontAwesome6";
 import { Platform } from "react-native";
 
 // 🔧 本地开发配置说明：
@@ -38,7 +39,7 @@ const PRODUCTION_URL =
 // 🔄 环境切换：true = 本地开发，false = 生产环境
 // ⚠️⚠️⚠️ 上线前必须改为 false！⚠️⚠️⚠️
 // 📦 打包前检查：运行 npm run build 前，确保这里改为 false
-const IS_LOCAL_DEV = true; // ⚠️ 上线前改为 false
+const IS_LOCAL_DEV = false; // ⚠️ 上线前改为 false
 
 // 🎯 智能API地址配置
 // 策略：
@@ -57,11 +58,6 @@ export const API_BASE_URL = (() => {
   return `http://${LOCAL_IP}:8000`;
 })();
 
-// 📝 调试信息：查看当前使用的API地址
-console.log(
-  `🔗 API地址: ${API_BASE_URL} (${IS_LOCAL_DEV ? "本地开发" : "生产环境"})`
-);
-console.log(`📱 设备类型: ${Platform.OS}`);
 const awsConfig = {
   // AWS区域
   region: "us-east-1",

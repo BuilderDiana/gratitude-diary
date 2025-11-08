@@ -23,9 +23,11 @@ from botocore.exceptions import ClientError
 import uuid
 from datetime import datetime
 from ..utils.cognito_auth import get_current_user
+from ..services.dynamodb_service import DynamoDBService
 
 # 创建路由器
 router = APIRouter()
+db_service = DynamoDBService()
 
 # AWS Cognito 配置
 COGNITO_USER_POOL_ID = "us-east-1_1DgDNffb0"
@@ -1306,14 +1308,23 @@ async def update_user_name(
         
         # 更新 Cognito 用户属性
         try:
+            attributes = [
+                {'Name': 'name', 'Value': request.name},
+                {'Name': 'preferred_username', 'Value': request.name}
+            ]
+
             cognito_client.admin_update_user_attributes(
                 UserPoolId=COGNITO_USER_POOL_ID,
                 Username=username,
-                UserAttributes=[
-                    {'Name': 'name', 'Value': request.name}
-                ]
+                UserAttributes=attributes
             )
             print(f"✅ 用户姓名更新成功")
+
+            try:
+                db_service.upsert_user_profile(user_id=username, name=request.name)
+            except Exception as profile_error:
+                print(f"⚠️ 更新用户档案失败: {profile_error}")
+                # 不抛出异常，以免影响主流程
             
             return {
                 "success": True,

@@ -24,6 +24,7 @@ import {
 } from "react-native";
 // ✅ 正确的SafeAreaView导入
 import { SafeAreaView } from "react-native-safe-area-context";
+import * as SecureStore from "expo-secure-store";
 
 // 导入图标
 import { Ionicons } from "@expo/vector-icons";
@@ -76,10 +77,20 @@ export default function LoginScreen() {
   const [showNameInputModal, setShowNameInputModal] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
   const [pendingPassword, setPendingPassword] = useState("");
-  const [isRegistering, setIsRegistering] = useState(false); // 标记是否正在注册流程
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [formError, setFormError] = useState("");
 
   // 获取 Typography 样式
   const typography = getTypography();
+
+  const markOnboardingComplete = async () => {
+    try {
+      await SecureStore.setItemAsync("hasCompletedOnboarding", "true");
+    } catch (error) {
+      console.warn("⚠️ 保存Onboarding状态失败", error);
+    }
+  };
 
   // Apple登录
   const handleAppleSignIn = async () => {
@@ -96,11 +107,12 @@ export default function LoginScreen() {
       if (!isValidUserName(user.name, user.email)) {
         console.log("📝 Apple登录用户姓名无效，弹出姓名输入框");
         setPendingEmail(user.email);
-        setIsRegistering(true);
+        setPendingPassword("");
         setShowNameInputModal(true);
         return;
       }
 
+    await markOnboardingComplete();
       // ✅ 跳转到日记列表
       navigation.replace("DiaryList");
 
@@ -167,11 +179,12 @@ export default function LoginScreen() {
       if (!isValidUserName(user.name, user.email)) {
         console.log("📝 Google登录用户姓名无效，弹出姓名输入框");
         setPendingEmail(user.email);
-        setIsRegistering(true);
+        setPendingPassword("");
         setShowNameInputModal(true);
         return;
       }
 
+    await markOnboardingComplete();
       // ✅ 跳转到日记列表
       navigation.replace("DiaryList");
       // TODO: 跳转到日记列表页面
@@ -210,74 +223,106 @@ export default function LoginScreen() {
 
   // 智能登录/注册处理（邮箱）- 使用新接口
   const handleEmailContinue = async () => {
-    if (!username.trim()) {
-      Alert.alert(t("login.title"), t("login.emailPlaceholder"), [
-        { text: t("common.confirm") },
-      ]);
-      return;
-    }
-
-    // 验证邮箱格式
+    const normalizedEmail = username.trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(username.trim())) {
-      Alert.alert(t("login.title"), t("signup.invalidEmail"), [
-        { text: t("common.confirm") },
-      ]);
+
+    setEmailError("");
+    setPasswordError("");
+    setFormError("");
+
+    let hasError = false;
+
+    if (!normalizedEmail) {
+      setEmailError(t("login.emailPlaceholder"));
+      hasError = true;
+    } else if (!emailRegex.test(normalizedEmail)) {
+      setEmailError(t("signup.invalidEmail"));
+      hasError = true;
+    }
+
+    if (!password || password.length < 8) {
+      setPasswordError(t("signup.passwordTooShort"));
+      hasError = true;
+    }
+
+    if (hasError) {
       return;
     }
 
-    // 如果没有密码，提示用户输入密码（新用户也需要设置密码）
-    if (!password) {
-      Alert.alert(t("login.title"), t("signup.passwordTooShort"), [
-        { text: t("common.confirm") },
-      ]);
-      return;
-    }
+    setUsername(normalizedEmail);
 
     try {
       setLoading(true);
       setLoadingProvider("username");
 
-      console.log("📧 调用邮箱登录或注册接口...", {
-        email: username.trim(),
-        hasPassword: !!password,
+      const result = await emailLoginOrSignUp(normalizedEmail, password);
+      console.log("📊 EMAIL_LOGIN_FLOW", {
+        stage: "login_or_signup",
+        status: result.status,
+        email: normalizedEmail,
       });
 
-      // 使用新的邮箱登录或注册接口（先不传姓名，验证账号密码是否正确）
-      const result = await emailLoginOrSignUp(username.trim(), password);
-
       if (result.status === "SIGNED_IN") {
-        // 登录成功
-        console.log("✅ 登录成功!", result.user);
+        const { user } = result;
+
+        if (!isValidUserName(user.name, user.email)) {
+          setPendingEmail(user.email || normalizedEmail);
+          setPendingPassword(password);
+          setShowNameInputModal(true);
+          return;
+        }
+
+        await markOnboardingComplete();
+        setPendingEmail("");
+        setPendingPassword("");
+        setEmailForVerification("");
         navigation.replace("DiaryList");
-      } else if (result.status === "CONFIRMATION_REQUIRED") {
-        // 需要验证码确认 - 这说明账号密码验证通过，是新用户注册
-        // 此时弹出姓名输入框，让用户输入姓名后再继续注册流程
-        console.log("📧 账号密码验证通过，是新用户注册，弹出姓名输入框");
-        setPendingEmail(result.email);
+        return;
+      }
+
+      if (result.status === "CONFIRMATION_REQUIRED") {
+        setEmailForVerification(normalizedEmail);
+        setPendingEmail(normalizedEmail);
         setPendingPassword(password);
-        setIsRegistering(true);
-        setShowNameInputModal(true);
-      } else if (result.status === "WRONG_PASSWORD") {
-        // 密码错误 - 直接显示错误，不弹出姓名输入框
-        Alert.alert(t("login.title"), "密码错误，请重试", [
+        setShowEmailVerificationModal(true);
+        Alert.alert(t("login.codeSent"), t("login.emailCodeSentMessage"), [
+          { text: t("common.confirm") },
+        ]);
+        return;
+      }
+
+      if (result.status === "WRONG_PASSWORD") {
+        setPasswordError(t("login.invalidCredentials"));
+        return;
+      }
+
+      setFormError(t("error.retryMessage"));
+    } catch (error: any) {
+      console.error("❌ 邮箱登录错误:", error);
+      const message = (error.message || "").toLowerCase();
+      console.log("📊 EMAIL_LOGIN_ERROR", {
+        stage: "login_or_signup",
+        email: normalizedEmail,
+        message: error?.message,
+      });
+
+      if (
+        message.includes("密码") ||
+        message.includes("password") ||
+        message.includes("not authorized")
+      ) {
+        setPasswordError(t("login.invalidCredentials"));
+      } else if (message.includes("network request failed")) {
+        setFormError(t("error.networkError"));
+        Alert.alert(t("login.title"), t("login.networkSuggestion"), [
+          { text: t("common.confirm") },
+        ]);
+      } else {
+        setFormError(error.message || t("error.retryMessage"));
+        Alert.alert(t("login.title"), error.message || t("error.retryMessage"), [
           { text: t("common.confirm") },
         ]);
       }
-    } catch (error: any) {
-      console.error("❌ 邮箱登录/注册错误:", error);
-
-      let errorMessage = error.message || "操作失败";
-
-      // 如果是网络错误，直接显示
-      if (errorMessage.includes("Network request failed")) {
-        errorMessage = t("error.networkError");
-      }
-
-      // 其他错误（如账号不存在等）也直接显示，不弹出姓名输入框
-      Alert.alert(t("login.title"), errorMessage, [
-        { text: t("common.confirm") },
-      ]);
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -291,11 +336,16 @@ export default function LoginScreen() {
       setLoadingProvider("username");
 
       console.log("📧 验证邮箱验证码...");
+      const verificationPassword = pendingPassword || password;
       const user = await emailConfirmAndLogin(
         emailForVerification,
         code,
-        password
+        verificationPassword
       );
+      console.log("📊 EMAIL_VERIFY_SUCCESS", {
+        stage: "email_confirm",
+        email: emailForVerification,
+      });
 
       console.log("✅ 邮箱确认并登录成功!", user);
       setShowEmailVerificationModal(false);
@@ -304,16 +354,32 @@ export default function LoginScreen() {
       if (!isValidUserName(user.name, user.email)) {
         console.log("📝 邮箱注册用户姓名无效，弹出姓名输入框");
         setPendingEmail(user.email);
-        setPendingPassword(password);
-        setIsRegistering(true);
+        setPendingPassword(verificationPassword);
         setShowNameInputModal(true);
         return;
       }
 
+      await markOnboardingComplete();
+      setPendingEmail("");
+      setPendingPassword("");
+      setEmailForVerification("");
       navigation.replace("DiaryList");
     } catch (error: any) {
       console.error("❌ 邮箱确认失败:", error);
-      throw error; // 让模态框处理错误显示
+      const message = (error.message || "").toLowerCase();
+      let displayMessage = t("login.verificationFailed");
+
+      if (message.includes("network request failed")) {
+        displayMessage = t("error.networkError");
+      }
+
+      console.log("📊 EMAIL_VERIFY_ERROR", {
+        stage: "email_confirm",
+        email: emailForVerification,
+        message: error?.message,
+      });
+
+      throw new Error(displayMessage); // 让模态框处理错误显示
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -322,71 +388,33 @@ export default function LoginScreen() {
 
   // 处理姓名确认（适用于所有登录方式）
   const handleNameConfirm = async (name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return;
+    }
+
     try {
       setLoading(true);
       setLoadingProvider("username");
-      setShowNameInputModal(false);
 
-      // 如果是邮箱注册流程，使用姓名重新调用注册接口
-      if (isRegistering && pendingEmail && pendingPassword) {
-        console.log("📧 使用姓名重新进行注册:", name);
+      await updateUserName(trimmedName);
 
-        // 使用姓名重新调用注册接口（这会重新发送验证码）
-        const result = await emailLoginOrSignUp(
-          pendingEmail,
-          pendingPassword,
-          name
-        );
-
-        if (result.status === "SIGNED_IN") {
-          // 注册并登录成功（理论上不应该发生，因为需要验证码）
-          console.log("✅ 注册并登录成功!", result.user);
-          navigation.replace("DiaryList");
-        } else if (result.status === "CONFIRMATION_REQUIRED") {
-          // 需要验证码确认 - 此时姓名已经保存，验证码已重新发送
-          console.log("📧 验证码已重新发送，显示验证码输入框");
-          setEmailForVerification(result.email);
-          setShowEmailVerificationModal(true);
-        } else if (result.status === "WRONG_PASSWORD") {
-          // 密码错误（不应该发生，因为前面已经验证过了）
-          Alert.alert(t("login.title"), "操作失败，请重试", [
-            { text: t("common.confirm") },
-          ]);
-        }
-
-        // 重置状态
-        setPendingEmail("");
-        setPendingPassword("");
-        setIsRegistering(false);
-      } else {
-        // 如果是 Apple 或 Google 登录后的姓名更新
-        console.log("📝 更新用户姓名:", name);
-        const currentUser = await getCurrentUser();
-        if (currentUser) {
-          // 1. 先更新 Cognito 的 name 属性（这样后端 JWT 中会包含这个姓名）
-          try {
-            await updateUserName(name);
-            console.log("✅ Cognito 用户姓名已更新");
-          } catch (error: any) {
-            console.warn("⚠️ 更新 Cognito 姓名失败，但继续保存本地:", error);
-            // 即使 Cognito 更新失败，也继续保存本地
-          }
-
-          // 2. 更新本地存储的用户信息
-          const updatedUser = {
-            ...currentUser,
-            name: name,
-          };
-          await saveUser(updatedUser);
-          console.log("✅ 用户姓名已更新并保存");
-          navigation.replace("DiaryList");
-        } else {
-          console.error("❌ 无法获取当前用户信息");
-          Alert.alert(t("login.title"), "操作失败，请重试", [
-            { text: t("common.confirm") },
-          ]);
-        }
+      const currentUser = await getCurrentUser();
+      if (currentUser) {
+        const updatedUser = {
+          ...currentUser,
+          name: trimmedName,
+        };
+        await saveUser(updatedUser);
       }
+
+      setShowNameInputModal(false);
+      setPendingEmail("");
+      setPendingPassword("");
+      setEmailForVerification("");
+
+      await markOnboardingComplete();
+      navigation.replace("DiaryList");
     } catch (error: any) {
       console.error("❌ 处理姓名确认失败:", error);
       let errorMessage = error.message || "操作失败";
@@ -396,10 +424,6 @@ export default function LoginScreen() {
       Alert.alert(t("login.title"), errorMessage, [
         { text: t("common.confirm") },
       ]);
-      // 重置状态
-      setPendingEmail("");
-      setPendingPassword("");
-      setIsRegistering(false);
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -411,20 +435,36 @@ export default function LoginScreen() {
     setShowNameInputModal(false);
     setPendingEmail("");
     setPendingPassword("");
-    setIsRegistering(false);
+    setEmailForVerification("");
   };
 
   // 重新发送邮箱验证码
   const handleResendEmailCode = async () => {
     try {
       // 重新调用登录或注册接口（会自动重新发送验证码）
-      await emailLoginOrSignUp(emailForVerification, password);
-      Alert.alert(t("login.codeSent"), "验证码已重新发送到邮箱", [
+      const verificationPassword = pendingPassword || password;
+      await emailLoginOrSignUp(emailForVerification, verificationPassword);
+      console.log("📊 EMAIL_CODE_RESEND_SUCCESS", {
+        stage: "email_resend",
+        email: emailForVerification,
+      });
+      Alert.alert(t("login.codeSent"), t("login.emailCodeSentMessage"), [
         { text: t("common.confirm") },
       ]);
     } catch (error: any) {
       console.error("❌ 重发验证码失败:", error);
-      throw error;
+      console.log("📊 EMAIL_CODE_RESEND_ERROR", {
+        stage: "email_resend",
+        email: emailForVerification,
+        message: error?.message,
+      });
+
+      const message = (error.message || "").toLowerCase();
+      if (message.includes("network request failed")) {
+        throw new Error(t("login.networkSuggestion"));
+      }
+
+      throw new Error(t("login.resendFailed"));
     }
   };
 
@@ -446,11 +486,23 @@ export default function LoginScreen() {
           {/* 邮箱登录表单 */}
           {/* 邮箱输入 */}
           <TextInput
-            style={[styles.input, typography.body]}
+            style={[
+              styles.input,
+              emailError ? styles.inputError : null,
+              typography.body,
+            ]}
             placeholder={t("login.emailPlaceholder")}
             placeholderTextColor="#999"
             value={username}
-            onChangeText={setUsername}
+            onChangeText={(value) => {
+              setUsername(value);
+              if (emailError) {
+                setEmailError("");
+              }
+              if (formError) {
+                setFormError("");
+              }
+            }}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
@@ -460,15 +512,31 @@ export default function LoginScreen() {
             accessibilityRole="text"
             accessibilityState={{ disabled: loading }}
           />
+          {emailError ? (
+            <Text style={styles.errorText}>{emailError}</Text>
+          ) : null}
 
           {/* 密码输入 */}
           <View style={styles.passwordInputContainer}>
             <TextInput
-              style={[styles.input, styles.passwordInput, typography.body]}
+              style={[
+                styles.input,
+                styles.passwordInput,
+                passwordError ? styles.inputError : null,
+                typography.body,
+              ]}
               placeholder={t("login.passwordPlaceholder")}
               placeholderTextColor="#999"
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(value) => {
+                setPassword(value);
+                if (passwordError) {
+                  setPasswordError("");
+                }
+                if (formError) {
+                  setFormError("");
+                }
+              }}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
@@ -497,6 +565,9 @@ export default function LoginScreen() {
               />
             </TouchableOpacity>
           </View>
+          {passwordError ? (
+            <Text style={styles.errorText}>{passwordError}</Text>
+          ) : null}
 
           {/* 继续按钮 */}
           <TouchableOpacity
@@ -516,6 +587,9 @@ export default function LoginScreen() {
               </Text>
             )}
           </TouchableOpacity>
+          {formError ? (
+            <Text style={styles.formErrorText}>{formError}</Text>
+          ) : null}
 
           {/* 姓名输入模态框 */}
           <NameInputModal
@@ -668,6 +742,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#1a1a1a",
   },
+  inputError: {
+    borderColor: "#FF3B30",
+  },
+  errorText: {
+    color: "#FF3B30",
+    fontSize: 13,
+    marginTop: 6,
+    marginLeft: 4,
+  },
   passwordInputContainer: {
     position: "relative",
     width: "100%",
@@ -684,6 +767,12 @@ const styles = StyleSheet.create({
   primaryButton: {
     backgroundColor: "#E56C45",
     marginTop: 8,
+  },
+  formErrorText: {
+    color: "#FF3B30",
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: "center",
   },
   primaryButtonText: {
     color: "#fff",

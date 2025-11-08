@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     
     # 应用配置
     app_name: str = "Gratitude Diary API"
-    debug: bool = True
+    debug: bool = False
     
     class Config:
         env_file = ".env"  # 从.env文件读取配置（Lambda环境中通常不存在，从环境变量读取）

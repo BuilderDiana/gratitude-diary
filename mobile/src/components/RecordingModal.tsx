@@ -46,12 +46,14 @@ interface RecordingModalProps {
   visible: boolean;
   onSuccess: () => void; // ✅ 录音成功后回调
   onCancel: () => void; // ✅ 取消录音回调
+  onDiscard?: () => void; // ✅ 删除未保存日记后回调
 }
 
 export default function RecordingModal({
   visible,
   onSuccess,
   onCancel,
+  onDiscard,
 }: RecordingModalProps) {
   // ✅ 动画值
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -173,6 +175,8 @@ export default function RecordingModal({
   // ✅ 新增:结果预览状态
   const [showResult, setShowResult] = useState(false);
   const [resultDiary, setResultDiary] = useState<any>(null);
+  const [pendingDiaryId, setPendingDiaryId] = useState<string | null>(null);
+  const [hasSavedPendingDiary, setHasSavedPendingDiary] = useState(false);
 
   // ✅ 新增:编辑状态
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -344,6 +348,21 @@ export default function RecordingModal({
   // 提前声明，供手势回调使用
   async function handleCancelRecording() {
     try {
+      let shouldDelete = false;
+      // 如果结果已生成但用户未保存，删除后端临时日记
+      if (showResult && pendingDiaryId && !hasSavedPendingDiary) {
+        try {
+          console.log("🗑️ 用户取消，删除未保存日记:", pendingDiaryId);
+          await deleteDiaryApi(pendingDiaryId);
+          shouldDelete = true;
+        } catch (deleteError) {
+          console.log("⚠️ 删除未保存日记失败（可忽略）:", deleteError);
+        }
+      }
+
+      setPendingDiaryId(null);
+      setHasSavedPendingDiary(false);
+
       // ✅ 安全地清理录音对象
       if (recordingRef.current) {
         try {
@@ -381,6 +400,9 @@ export default function RecordingModal({
 
       console.log("❌ 录音已取消");
       onCancel();
+      if (shouldDelete) {
+        onDiscard?.();
+      }
     } catch (error) {
       console.error("取消录音失败:", error);
       // ✅ 即使出错也要重置状态
@@ -443,6 +465,23 @@ export default function RecordingModal({
       return () => clearTimeout(timer);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible && pendingDiaryId && !hasSavedPendingDiary) {
+      (async () => {
+        try {
+          console.log("🗑️ Modal 关闭，清理未保存日记:", pendingDiaryId);
+          await deleteDiaryApi(pendingDiaryId);
+          onDiscard?.();
+        } catch (error) {
+          console.log("⚠️ 关闭时删除未保存日记失败:", error);
+        } finally {
+          setPendingDiaryId(null);
+          setHasSavedPendingDiary(false);
+        }
+      })();
+    }
+  }, [visible, pendingDiaryId, hasSavedPendingDiary]);
 
   // ✅ 组件卸载时清理
   useEffect(() => {
@@ -795,6 +834,8 @@ export default function RecordingModal({
         setIsProcessing(false);
         setResultDiary(diary);
         setShowResult(true);
+        setPendingDiaryId(diary.diary_id);
+        setHasSavedPendingDiary(false);
 
         // 🔍 调试：打印完整的AI反馈
         console.log("✅ 显示结果预览");
@@ -805,7 +846,9 @@ export default function RecordingModal({
       } catch (error: any) {
         // ✅ 停止模拟（错误时）
         cleanupSteps && cleanupSteps();
-        console.error("❌ 处理失败:", error);
+        console.log("❌ 处理失败:", error);
+        setPendingDiaryId(null);
+        setHasSavedPendingDiary(false);
 
         // ✅ 检查是否是空内容错误（EMPTY_TRANSCRIPT）
         if (error.code === "EMPTY_TRANSCRIPT" || 
@@ -820,19 +863,20 @@ export default function RecordingModal({
               error.message.includes("未能识别到任何语音内容")
             ))) {
           // 空内容错误：只提供"重录"选项
-          Alert.alert(
-            t("error.emptyRecording.title"),
-            t("error.emptyRecording.message"),
-            [
-              {
-                text: t("common.rerecord"),
-                onPress: () => {
-                  setIsProcessing(false);
-                  startRecording();
-                },
+        Alert.alert(
+          t("error.emptyRecording.title"),
+          t("error.emptyRecording.message"),
+          [
+            {
+              text: t("common.rerecord"),
+              onPress: () => {
+                setIsProcessing(false);
+                startRecording();
               },
-            ]
-          );
+            },
+          ]
+        );
+        setToastVisible(false);
           return;
         }
 
@@ -856,9 +900,10 @@ export default function RecordingModal({
             onPress: () => onCancel(),
           },
         ]);
+        setToastVisible(false);
       }
     } catch (error) {
-      console.error("完成录音失败:", error);
+      console.log("完成录音失败:", error);
       Alert.alert(t("error.genericError"), t("error.recordingFailed"));
       onCancel();
     }
@@ -1091,6 +1136,9 @@ export default function RecordingModal({
           console.log("📝 没有修改，跳过更新");
         }
       }
+
+      setHasSavedPendingDiary(true);
+      setPendingDiaryId(null);
 
       // ✅ 清理音频播放相关资源
       if (resultSoundRef.current) {

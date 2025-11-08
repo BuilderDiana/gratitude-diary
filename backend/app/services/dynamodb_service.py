@@ -63,6 +63,7 @@ class DynamoDBService:
             'userId':user_id,
             'createdAt':create_at,
             'date':date,
+            'itemType': 'diary',
             'language': language,              # ← 新增：语言
             'title': title,                   # ← 新增：标题
             'originalContent':original_content,
@@ -129,8 +130,21 @@ class DynamoDBService:
             # 转换格式
             diaries = []
             for item in response.get('Items', []):
+                item_type = item.get('itemType', 'diary').lower()
+                if item_type != 'diary':
+                    continue
+
+                diary_id = item.get('diaryId')
+                if not diary_id or str(diary_id).lower() == 'unknown':
+                    # ⚠️ 非日记数据或历史异常数据（无有效 diaryId），直接跳过
+                    print(f"⚠️ 跳过无效日记记录: {item.get('diaryId')} {item.get('itemType')}")
+                    continue
+
+                if 'originalContent' not in item and 'polishedContent' not in item:
+                    continue
+
                 diaries.append({
-                    'diary_id': item.get('diaryId', 'unknown'),
+                    'diary_id': diary_id,
                     'user_id': item.get('userId', ''),
                     'created_at': item.get('createdAt', ''),
                     'date': item.get('date', ''),
@@ -333,3 +347,68 @@ class DynamoDBService:
         except Exception as e:
             print(f"删除日记失败: {str(e)}")
             raise
+
+    def upsert_user_profile(self, user_id: str, name: str) -> None:
+        """创建或更新用户资料"""
+        try:
+            profile_item = {
+                'userId': user_id,
+                'createdAt': 'PROFILE',
+                'itemType': 'profile',
+                'displayName': name,
+                'updatedAt': datetime.now(timezone.utc).isoformat(),
+            }
+            self.table.put_item(Item=profile_item)
+        except Exception as e:
+            print(f"❌ 更新用户资料失败: {str(e)}")
+            raise
+
+    def delete_user_data(self, user_id: str) -> List[str]:
+        """删除用户的所有日记并返回需要删除的音频URL列表"""
+        audio_urls: List[str] = []
+        try:
+            last_evaluated_key = None
+            while True:
+                query_kwargs = {
+                    'KeyConditionExpression': Key('userId').eq(user_id),
+                    'ScanIndexForward': False,
+                }
+
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+                response = self.table.query(**query_kwargs)
+                items = response.get('Items', [])
+
+                if not items and not last_evaluated_key:
+                    break
+
+                for item in items:
+                    created_at = item.get('createdAt')
+                    if not created_at:
+                        continue
+
+                    audio_url = item.get('audioUrl')
+                    if audio_url:
+                        audio_urls.append(audio_url)
+
+                    try:
+                        self.table.delete_item(
+                            Key={
+                                'userId': user_id,
+                                'createdAt': created_at
+                            }
+                        )
+                    except Exception as delete_error:
+                        print(f"❌ 删除日记失败 (userId={user_id}, createdAt={created_at}): {delete_error}")
+                        raise
+
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+
+        except Exception as e:
+            print(f"❌ 删除用户日记失败: {str(e)}")
+            raise
+
+        return audio_urls

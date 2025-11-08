@@ -8,7 +8,7 @@
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Request
-from typing import List, Dict
+from typing import List, Dict, Optional
 import asyncio
 import re
 import json
@@ -99,7 +99,7 @@ def normalize_transcription(text: str) -> str:
     return normalized
 
 
-def validate_transcription(transcription: str) -> None:
+def validate_transcription(transcription: str, duration: Optional[int] = None) -> None:
     """
     验证转录内容的有效性
     
@@ -128,6 +128,38 @@ def validate_transcription(transcription: str) -> None:
                 "message": "No valid speech detected."
             })
         )
+    
+    if duration is not None and duration >= 6:
+        seconds = max(duration, 1)
+        char_per_second = len(normalized) / seconds
+        word_matches = re.findall(r"[A-Za-z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+", transcription)
+        filler_tokens = {"um", "uh", "uhh", "hmm", "erm", "ah", "oh", "mmm"}
+        meaningful_words = [
+            word
+            for word in word_matches
+            if len(word) >= 2 and word.lower() not in filler_tokens
+        ]
+        print(
+            "🔍 语音密度检查:",
+            {
+                "duration": duration,
+                "char_per_second": char_per_second,
+                "word_count": len(word_matches),
+                "meaningful_words": meaningful_words,
+            },
+        )
+        minimal_words_required = max(2, int(duration / 4))
+        if char_per_second < 1.0 and len(meaningful_words) < minimal_words_required:
+            print("❌ 语音密度过低，判定为无效语音")
+            raise HTTPException(
+                status_code=400,
+                detail=json.dumps(
+                    {
+                        "code": "EMPTY_TRANSCRIPT",
+                        "message": "No valid speech detected.",
+                    }
+                ),
+            )
     
     print(f"✅ 转录结果验证通过 - 内容: {transcription[:50]}...")
 
@@ -238,7 +270,8 @@ async def create_voice_diary(
             """异步语音转文字 - ✅ 添加 await"""
             return await openai_service.transcribe_audio(
                 audio_content,
-                audio.filename or "recording.m4a"
+                audio.filename or "recording.m4a",
+                expected_duration=duration
             )
         
         # 并行执行（同时进行，节省时间）
@@ -254,7 +287,7 @@ async def create_voice_diary(
         # ============================================
         # Step 3: 验证转录内容
         # ============================================
-        validate_transcription(transcription)
+        validate_transcription(transcription, duration)
         
         # ============================================
         # Step 4: AI 处理 - ✅ 添加 await
@@ -531,6 +564,12 @@ async def delete_diary(
             "diary_id": diary_id
         }
         
+    except ValueError as e:
+        print(f"❌ 删除日记失败（不存在）: {str(e)}")
+        raise HTTPException(
+            status_code=404,
+            detail=str(e)
+        )
     except Exception as e:
         print(f"❌ 删除日记失败: {str(e)}")
         raise HTTPException(

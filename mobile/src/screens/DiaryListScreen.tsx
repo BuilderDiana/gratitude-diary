@@ -28,7 +28,9 @@ import {
   Platform,
   Dimensions,
   ToastAndroid,
+  Linking,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
 // import * as Clipboard from "expo-clipboard"; // TODO: 安装expo-clipboard
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -57,6 +59,7 @@ import {
   signOut,
   startAutoRefresh,
 } from "../services/authService";
+import { deleteAccount } from "../services/accountService";
 import { handleAuthErrorOnly } from "../utils/errorHandler";
 import {
   getDiaries,
@@ -105,6 +108,7 @@ export default function DiaryListScreen() {
 
   // ✅ 新增:用户菜单状态
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // 日记列表
   const [diaries, setDiaries] = useState<Diary[]>([]);
@@ -395,15 +399,52 @@ export default function DiaryListScreen() {
 
       const response = await getDiaries();
 
-      // 统计音频数量
-      const audioCount = response.filter((diary) => diary.audio_url).length;
-      console.log("✅ 日记加载成功:", {
-        total: response.length,
-        withAudio: audioCount,
-        withoutAudio: response.length - audioCount,
+      const sanitizedDiaries = response.filter((diary) => {
+        if (!diary) {
+          return false;
+        }
+
+        const id = String(diary.diary_id || "")
+          .trim()
+          .toLowerCase();
+        if (!id || id === "unknown") {
+          console.log("⚠️ 跳过无效日记: 缺少合法ID", diary);
+          return false;
+        }
+
+        const hasContent =
+          (diary.polished_content &&
+            diary.polished_content.trim().length > 0) ||
+          (diary.original_content && diary.original_content.trim().length > 0);
+
+        if (!hasContent) {
+          console.log("⚠️ 跳过无效日记: 缺少内容", diary);
+          return false;
+        }
+
+        return true;
       });
 
-      setDiaries(response);
+      // 统计音频数量
+      const audioCount = sanitizedDiaries.filter(
+        (diary) => diary.audio_url
+      ).length;
+      console.log("✅ 日记加载成功:", {
+        total: sanitizedDiaries.length,
+        rawTotal: response.length,
+        withAudio: audioCount,
+        withoutAudio: sanitizedDiaries.length - audioCount,
+      });
+
+      if (sanitizedDiaries.length !== response.length) {
+        console.log(
+          `⚠️ 过滤掉 ${
+            response.length - sanitizedDiaries.length
+          } 条无效日记（疑似PROFILE或旧脏数据）`
+        );
+      }
+
+      setDiaries(sanitizedDiaries);
     } catch (error: any) {
       console.error("❌ 加载日记失败:", error);
 
@@ -831,6 +872,80 @@ export default function DiaryListScreen() {
     setTimeout(() => setToastVisible(false), 1500);
   };
 
+  const handleSupportFeedback = async () => {
+    const mailto = "mailto:support@thankly.app";
+    try {
+      const canOpen = await Linking.canOpenURL(mailto);
+      if (!canOpen) {
+        Alert.alert(
+          t("error.supportUnavailableTitle"),
+          t("error.supportUnavailableMessage")
+        );
+        return;
+      }
+      await Linking.openURL(mailto);
+    } catch (error) {
+      console.error("❌ 打开邮件客户端失败:", error);
+      Alert.alert(
+        t("error.supportUnavailableTitle"),
+        t("error.supportUnavailableMessage")
+      );
+    }
+    setProfileMenuVisible(false);
+  };
+
+  const handleOpenPrivacyPolicy = () => {
+    setProfileMenuVisible(false);
+    navigation.navigate("PrivacyPolicy");
+  };
+
+  const handleOpenTermsOfService = () => {
+    setProfileMenuVisible(false);
+    navigation.navigate("TermsOfService");
+  };
+
+  const confirmDeleteAccount = () => {
+    if (isDeletingAccount) {
+      return;
+    }
+
+    Alert.alert(
+      t("confirm.deleteAccountTitle"),
+      t("confirm.deleteAccountMessage"),
+      [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("confirm.deleteAccountConfirm"),
+          style: "destructive",
+          onPress: handleDeleteAccount,
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = async () => {
+    if (isDeletingAccount) {
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    try {
+      await deleteAccount();
+      showToast(t("success.accountDeleted"));
+      await signOut();
+      navigation.reset({ index: 0, routes: [{ name: "Welcome" }] });
+    } catch (error: any) {
+      console.error("❌ 删除账号失败:", error);
+      Alert.alert(
+        t("error.deleteAccountTitle"),
+        t("error.deleteAccountFailed")
+      );
+    } finally {
+      setIsDeletingAccount(false);
+      setProfileMenuVisible(false);
+    }
+  };
+
   type DiaryAction = "copyEntry" | "delete";
 
   const handleAction = (action: DiaryAction) => {
@@ -868,6 +983,18 @@ export default function DiaryListScreen() {
       showToast(t("success.deleted"));
     } catch (error: any) {
       console.error("删除日记失败:", error);
+
+      // 如果是后台已经不存在的老数据，静默刷新列表并返回
+      const message = error?.message || "";
+      if (
+        message.includes("找不到日记ID") ||
+        message.includes("Not Found") ||
+        message.includes("diaryID")
+      ) {
+        await loadDiaries();
+        return;
+      }
+
       Alert.alert(
         t("error.genericError"),
         error.message || t("error.deleteFailed")
@@ -1013,6 +1140,78 @@ export default function DiaryListScreen() {
           {/* 分割线 */}
           <View style={styles.profileMenuDivider} />
 
+          {/* Support & Feedback */}
+          <TouchableOpacity
+            style={styles.profileMenuItem}
+            onPress={handleSupportFeedback}
+            accessibilityLabel={t("home.supportFeedback")}
+            accessibilityHint={t("accessibility.button.supportHint")}
+            accessibilityRole="button"
+          >
+            <Ionicons name="mail-outline" size={20} color="#332824" />
+            <Text style={[styles.profileMenuItemText, typography.body]}>
+              {t("home.supportFeedback")}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Privacy Policy */}
+          <TouchableOpacity
+            style={styles.profileMenuItem}
+            onPress={handleOpenPrivacyPolicy}
+            accessibilityLabel={t("home.privacyPolicy")}
+            accessibilityHint={t("accessibility.button.privacyHint")}
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={20}
+              color="#332824"
+            />
+            <Text style={[styles.profileMenuItemText, typography.body]}>
+              {t("home.privacyPolicy")}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Terms of Service */}
+          <TouchableOpacity
+            style={styles.profileMenuItem}
+            onPress={handleOpenTermsOfService}
+            accessibilityLabel={t("home.termsOfService")}
+            accessibilityHint={t("accessibility.button.privacyHint")}
+            accessibilityRole="button"
+          >
+            <Ionicons name="document-text-outline" size={20} color="#332824" />
+            <Text style={[styles.profileMenuItemText, typography.body]}>
+              {t("home.termsOfService")}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Delete Account */}
+          <TouchableOpacity
+            style={[
+              styles.profileMenuItem,
+              isDeletingAccount && styles.profileMenuItemDisabled,
+            ]}
+            onPress={confirmDeleteAccount}
+            disabled={isDeletingAccount}
+            accessibilityLabel={t("home.deleteAccount")}
+            accessibilityHint={t("accessibility.button.deleteAccountHint")}
+            accessibilityRole="button"
+            accessibilityState={{ busy: isDeletingAccount }}
+          >
+            <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+            <Text style={[styles.profileMenuItemTextDanger, typography.body]}>
+              {t("home.deleteAccount")}
+            </Text>
+            {isDeletingAccount && (
+              <ActivityIndicator
+                size="small"
+                color="#FF3B30"
+                style={styles.profileMenuLoading}
+              />
+            )}
+          </TouchableOpacity>
+
           {/* 登出按钮 */}
           <TouchableOpacity
             style={styles.profileMenuItem}
@@ -1021,8 +1220,8 @@ export default function DiaryListScreen() {
             accessibilityHint={t("accessibility.button.signOutHint")}
             accessibilityRole="button"
           >
-            <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-            <Text style={[styles.profileMenuItemTextDanger, typography.body]}>
+            <Ionicons name="log-out-outline" size={20} color="#332824" />
+            <Text style={[styles.profileMenuItemText, typography.body]}>
               {t("home.signOut")}
             </Text>
           </TouchableOpacity>
@@ -1352,6 +1551,7 @@ export default function DiaryListScreen() {
         visible={recordingModalVisible}
         onSuccess={handleRecordingSuccess}
         onCancel={handleRecordingCancel}
+        onDiscard={loadDiaries}
       />
 
       {/* ✅ 新增:文字输入Modal */}
@@ -1542,7 +1742,9 @@ const styles = StyleSheet.create({
   diaryCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
-    padding: 16,
+    padding: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
     marginHorizontal: 20,
     marginBottom: 16,
   },
@@ -1551,7 +1753,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 4,
   },
 
   dateContainer: {
@@ -1924,18 +2126,33 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#FCF4E3",
     marginHorizontal: 16,
+    marginVertical: 4,
   },
 
   profileMenuItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
+    padding: 12,
     paddingHorizontal: 20,
   },
 
+  profileMenuItemDisabled: {
+    opacity: 0.5,
+  },
+
+  profileMenuItemText: {
+    fontSize: 15,
+    color: "#1A1A1A",
+    marginLeft: 12,
+  },
+
   profileMenuItemTextDanger: {
-    fontSize: 18, // 16 + 2 = 18
+    fontSize: 15, // 16 + 2 = 18
     color: "#FF3B30",
     marginLeft: 12,
+  },
+
+  profileMenuLoading: {
+    marginLeft: 8,
   },
 });

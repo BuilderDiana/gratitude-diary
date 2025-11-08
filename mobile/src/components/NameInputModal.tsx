@@ -1,10 +1,10 @@
 /**
  * 姓名输入Modal组件
- * 
+ *
  * 当新用户注册时，友好地询问用户希望如何被称呼
  * 设计理念：简洁、温暖、不打扰
  */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   View,
@@ -34,6 +34,12 @@ export default function NameInputModal({
 }: NameInputModalProps) {
   const [name, setName] = useState("");
   const typography = getTypography();
+
+  useEffect(() => {
+    if (!visible) {
+      setName("");
+    }
+  }, [visible]);
 
   const handleConfirm = () => {
     const trimmedName = name.trim();
@@ -65,10 +71,19 @@ export default function NameInputModal({
         <View style={styles.modalContent}>
           {/* 标题 */}
           <View style={styles.header}>
-            <Text style={[styles.title, typography.diaryTitle]}>
+            <Text
+              style={[styles.title, typography.diaryTitle]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
               {t("login.namePrompt.title")}
             </Text>
-            <Text style={[styles.subtitle, typography.body]}>
+            <Text
+              style={[styles.subtitle, typography.body]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              ellipsizeMode="tail"
+            >
               {t("login.namePrompt.subtitle")}
             </Text>
           </View>
@@ -81,10 +96,12 @@ export default function NameInputModal({
             value={name}
             onChangeText={setName}
             autoFocus
-            maxLength={20}
+            maxLength={32}
             returnKeyType="done"
             onSubmitEditing={handleConfirm}
-            accessibilityLabel={placeholder || t("login.namePrompt.placeholder")}
+            accessibilityLabel={
+              placeholder || t("login.namePrompt.placeholder")
+            }
             accessibilityHint={t("accessibility.input.nameHint")}
             accessibilityRole="text"
           />
@@ -165,16 +182,16 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   title: {
-    fontSize: 22,
+    fontSize: 18,
     color: "#1A1A1A",
     marginBottom: 8,
     textAlign: "center",
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: "#666",
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 18,
   },
   input: {
     width: "100%",
@@ -201,8 +218,6 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     backgroundColor: "#F5F5F5",
-    borderWidth: 1,
-    borderColor: "#E0E0E0",
   },
   cancelButtonText: {
     color: "#666",
@@ -224,4 +239,3 @@ const styles = StyleSheet.create({
     color: "#999",
   },
 });
-

@@ -2,11 +2,11 @@
 AI 服务 - 混合模型优化版本
 作者灵感来源：乔布斯的简约哲学 + 张小龙的克制设计
 
-🔥 重大更新：
-1. 从 OpenAI GPT-4o-mini 迁移到 AWS Bedrock Claude 模型
-2. 混合使用 Haiku 3.5（润色）+ Sonnet 3.5（反馈）
-3. 并行执行，速度提升 40-50%
-4. 保持 Whisper 语音转文字不变
+🔥 最新更新：
+1. AI 暖心反馈从 Claude Sonnet 回归 OpenAI GPT-4o-mini（TestFlight 验证稳定版）
+2. 润色 + 标题与反馈统一使用 GPT-4o-mini（降低维护成本）
+3. 并行执行策略保持不变，性能继续稳定
+4. Whisper 语音转文字持续沿用，保证识别准确度
 
 核心理念：
 1. 简单但不简陋（Simple but not simplistic）
@@ -17,11 +17,10 @@ AI 服务 - 混合模型优化版本
 import tempfile
 import os
 import json
-import asyncio  # 🔥 新增：用于并行执行
+import asyncio  # 🔥 用于并行执行
 from typing import Dict, Optional
 from openai import OpenAI
-import boto3  # 🔥 新增：AWS SDK
-from botocore.exceptions import ClientError  # 🔥 新增：用于捕获 AWS 错误
+import io
 
 from ..config import get_settings
 
@@ -32,14 +31,14 @@ class OpenAIService:
     
     这个类就像一个温柔的日记助手，它会：
     1. 听懂你的声音（语音转文字 - Whisper）
-    2. 美化你的文字（轻度润色 - Claude Haiku 3.5）
-    3. 给你温暖的回应（心理陪伴 - Claude Sonnet 3.5）
-    4. 帮你起个好标题（画龙点睛 - Claude Haiku 3.5）
+    2. 美化你的文字（轻度润色 - GPT-4o-mini）
+    3. 给你温暖的回应（心理陪伴 - GPT-4o-mini）
+    4. 帮你起个好标题（画龙点睛 - GPT-4o-mini）
     
     🔥 模型选择策略：
     - Whisper: 语音转文字（OpenAI，无可替代）
-    - Haiku 3.5: 润色 + 标题（快速、便宜、效果好）
-    - Sonnet 3.5: AI 反馈（慢一点但温暖有深度）
+    - GPT-4o-mini: 润色 + 标题（快速、稳定、成本可控）
+    - GPT-4o-mini: AI 反馈（TestFlight 回归验证更稳定）
     """
     
     # 🎯 模型配置
@@ -47,11 +46,9 @@ class OpenAIService:
         # 语音转文字（保持不变）
         "transcription": "whisper-1",
         
-        # 🔥 新增：Claude 模型配置
-        # ⚠️ 临时：Haiku 3.5 正在申请 inference profile，暂时使用 GPT-4o-mini 替代（避免限流）
-        # TODO: 申请通过后，从备份文件恢复 Haiku 3.5 调用: openai_service.py.backup-sonnet-haiku
-        "haiku": "gpt-4o-mini",  # 临时：用 GPT-4o-mini 替代（润色 + 标题）
-        "sonnet": "anthropic.claude-3-5-sonnet-20240620-v1:0",  # AI 反馈（温暖、有深度）
+        # 🔥 GPT 模型配置
+        "haiku": "gpt-4o-mini",  # 润色 + 标题（命名沿用旧字段，便于兼容）
+        "sonnet": "gpt-4o-mini",  # AI 暖心反馈（回归 OpenAI 模型）
         
         # 🎤 为什么 Whisper？
         # ✅ OpenAI 官方语音转文字模型
@@ -63,10 +60,10 @@ class OpenAIService:
         # ✅ 便宜（$1/1M tokens input）
         # ✅ 足够聪明（日记润色绰绰有余）
         
-        # 💬 为什么 Sonnet 反馈？
-        # ✅ 温暖有深度（共情能力强）
-        # ✅ 中文表达自然（比 GPT 更好）
-        # ✅ 值得慢一点（用户期待有深度的反馈）
+        # 💬 为什么 GPT-4o-mini 反馈？
+        # ✅ 温暖真实（兼顾共情与安全）
+        # ✅ 多语言能力强（中英文都自然）
+        # ✅ 与润色模型统一，方便维护
     }
     
     # 📏 长度限制（保持不变）
@@ -85,28 +82,12 @@ class OpenAIService:
         
         # OpenAI 客户端（用于 Whisper）
         self.openai_client = OpenAI(api_key=settings.openai_api_key)
-        
-        # 🔥 新增：AWS Bedrock 客户端
-        # 使用 settings 中的 region，而不是直接读取环境变量
-        region = settings.aws_region or os.getenv('AWS_REGION', 'us-east-1')
-        
-        try:
-            self.bedrock_client = boto3.client(
-                service_name='bedrock-runtime',
-                region_name=region
-            )
-            print(f"✅ Bedrock 客户端初始化成功 (区域: {region})")
-        except Exception as e:
-            print(f"❌ Bedrock 客户端初始化失败: {type(e).__name__}: {e}")
-            print(f"📍 提示: 请检查 AWS 凭证配置")
-            import traceback
-            traceback.print_exc()
-            raise
+        self.openai_api_key = settings.openai_api_key
         
         print(f"✅ AI 服务初始化完成")
         print(f"   - Whisper: 语音转文字")
-        print(f"   - Haiku 3.5: 润色 + 标题 (模型: {self.MODEL_CONFIG['haiku']}) ⚠️ 临时使用 GPT-4o-mini")
-        print(f"   - Sonnet 3.5: AI 反馈 (模型: {self.MODEL_CONFIG['sonnet']})")
+        print(f"   - GPT-4o-mini: 润色 + 标题 (配置字段 haiku)")
+        print(f"   - GPT-4o-mini: AI 反馈 (配置字段 sonnet)")
     
     # ========================================================================
     # 语音转文字（保持不变）
@@ -115,7 +96,8 @@ class OpenAIService:
     async def transcribe_audio(
         self, 
         audio_content: bytes, 
-        filename: str
+        filename: str,
+        expected_duration: Optional[int] = None
     ) -> str:
         """
         语音转文字 - 把你的声音变成文字
@@ -151,20 +133,208 @@ class OpenAIService:
             print(f"✅ 临时文件准备完成")
             
             # 调用 Whisper
-            with open(temp_file_path, 'rb') as audio_file:
-                print(f"📤 正在识别语音...")
-                transcription = self.openai_client.audio.transcriptions.create(
-                    model=self.MODEL_CONFIG["transcription"],
-                    file=audio_file,
-                    language=None,
-                )
+            import httpx
+            import io
+            print("📤 正在识别语音（verbose_json 模式）...")
+            response_json = None
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    file_stream = io.BytesIO(audio_content)
+                    response = client.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={
+                            "Authorization": f"Bearer {self.openai_api_key}",
+                        },
+                        data={
+                            "model": self.MODEL_CONFIG["transcription"],
+                            "language": "",
+                            "temperature": "0",
+                            "response_format": "verbose_json",
+                        },
+                        files={
+                            "file": (filename or "recording.m4a", file_stream, "audio/m4a"),
+                        },
+                    )
+                    response.raise_for_status()
+                    response_json = response.json()
+            except httpx.HTTPError as http_err:
+                print(f"❌ Whisper HTTP 请求失败: {http_err}")
+                if http_err.response is not None:
+                    print(f"📄 Whisper 响应: {http_err.response.text[:200]}...")
+                raise ValueError("语音识别失败: 服务暂时不可用，请稍后重试")
             
-            # 验证结果
-            text = (transcription.text or "").strip()
+            if not response_json:
+                raise ValueError("语音识别失败: 未收到有效响应")
             
-            if len(text) < self.LENGTH_LIMITS["min_audio_text"]:
+            text = (response_json.get("text") or "").strip()
+            segments = response_json.get("segments", []) or []
+            
+            import re
+            normalized_text = re.sub(r"\s+", "", text)
+            
+            if len(normalized_text) < self.LENGTH_LIMITS["min_audio_text"]:
                 print(f"❌ 转录内容过短: '{text}'")
                 raise ValueError("未识别到有效内容，请说清楚一些")
+            
+            cleaned_text = re.sub(r"[^a-z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+", " ", text.lower()).strip()
+            compact_text = cleaned_text.replace(" ", "")
+            fallback_phrases = [
+                "thank you for watching",
+                "thanks for watching",
+                "thank you so much for watching",
+                "please subscribe",
+                "don't forget to subscribe",
+                "subscribe to my channel",
+                "remember to subscribe",
+                "leave a comment",
+                "smash that like button",
+                "that's it",
+                "thats it",
+                "that's all",
+                "thats all",
+            ]
+            normalized_fallbacks = []
+            for phrase in fallback_phrases:
+                normalized_fallbacks.append(phrase)
+                normalized_fallbacks.append(phrase.replace(" ", ""))
+                normalized_fallbacks.append(phrase.replace("'", ""))
+                normalized_fallbacks.append(phrase.replace(" ", "").replace("'", ""))
+            if any(phrase in cleaned_text or phrase in compact_text for phrase in normalized_fallbacks):
+                print(
+                    "❌ 检测到模板化填充语句，视为无效内容:",
+                    {"text": text, "cleaned": cleaned_text},
+                )
+                raise ValueError("未识别到有效内容，请说清楚一些")
+            
+            filler_tokens = {
+                "um",
+                "uh",
+                "uhh",
+                "hmm",
+                "hmmm",
+                "erm",
+                "er",
+                "ah",
+                "oh",
+                "mmm",
+            }
+            token_pattern = r"[A-Za-z\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+"
+            tokens = re.findall(token_pattern, text)
+            meaningful_tokens = [
+                token
+                for token in tokens
+                if len(token) >= 2 and token.lower() not in filler_tokens
+            ]
+            
+            unique_chars = len(set(normalized_text))
+            if unique_chars <= 2 and len(normalized_text) > 2:
+                print(
+                    "❌ 转录结果包含大量重复字符，视为无效:",
+                    {"text": text, "normalized": normalized_text},
+                )
+                raise ValueError("未识别到有效内容，请说清楚一些")
+            
+            # 分析 Whisper 段结果，确认是否真的有讲话
+            def _segment_value(segment, attr, default):
+                if isinstance(segment, dict):
+                    return segment.get(attr, default)
+                return getattr(segment, attr, default)
+            
+            confident_segments = []
+            total_confident_duration = 0.0
+            total_segment_duration = 0.0
+            avg_no_speech_sum = 0.0
+            
+            for segment in segments:
+                try:
+                    start = float(_segment_value(segment, "start", 0))
+                    end = float(_segment_value(segment, "end", 0))
+                    seg_duration = max(0.0, end - start)
+                except (TypeError, ValueError):
+                    seg_duration = 0.0
+                    start = 0.0
+                    end = 0.0
+                
+                total_segment_duration += seg_duration
+                
+                try:
+                    no_speech_prob = float(_segment_value(segment, "no_speech_prob", 1))
+                except (TypeError, ValueError):
+                    no_speech_prob = 1
+                
+                try:
+                    avg_logprob = float(_segment_value(segment, "avg_logprob", -10))
+                except (TypeError, ValueError):
+                    avg_logprob = -10
+                
+                avg_no_speech_sum += no_speech_prob * seg_duration
+                
+                if (
+                    seg_duration >= 0.3
+                    and no_speech_prob < 0.45
+                    and avg_logprob > -0.75
+                ):
+                    confident_segments.append(segment)
+                    total_confident_duration += seg_duration
+            
+            reference_duration = None
+            if expected_duration and expected_duration > 0:
+                reference_duration = float(expected_duration)
+            elif total_segment_duration > 0:
+                reference_duration = total_segment_duration
+            else:
+                reference_duration = None
+            
+            speech_ratio = (
+                total_confident_duration / reference_duration
+                if reference_duration and reference_duration > 0
+                else None
+            )
+            
+            avg_no_speech_prob = (
+                avg_no_speech_sum / total_segment_duration
+                if total_segment_duration > 0
+                else 1.0
+            )
+            
+            if reference_duration and reference_duration >= 6:
+                if (speech_ratio is None or speech_ratio < 0.2) or total_confident_duration < 1.0:
+                    print(
+                        "❌ 检测到有效语音过少:",
+                        {
+                            "expected_duration": expected_duration,
+                            "total_confident_duration": total_confident_duration,
+                            "speech_ratio": speech_ratio,
+                            "avg_no_speech_prob": avg_no_speech_prob,
+                            "segments_count": len(segments),
+                        },
+                    )
+                    raise ValueError("未识别到有效内容，请说清楚一些")
+            
+            # 使用文本与时长的关系做进一步校验（防止幻觉）
+            if reference_duration and reference_duration >= 10:
+                char_per_second = len(normalized_text) / reference_duration
+                if char_per_second < 0.8:
+                    print(
+                        "❌ 文本与音频时长不匹配，疑似静音录音:",
+                        {
+                            "text_length": len(normalized_text),
+                            "reference_duration": reference_duration,
+                            "char_per_second": char_per_second,
+                        },
+                    )
+                    raise ValueError("未识别到有效内容，请稍作表达后再试")
+
+            if reference_duration and len(meaningful_tokens) < 2:
+                print(
+                    "❌ 有效词汇数量不足，判定为无意义内容:",
+                    {
+                        "tokens": tokens,
+                        "meaningful_tokens": meaningful_tokens,
+                        "duration": reference_duration,
+                    },
+                )
+                raise ValueError("未识别到有效内容，请稍作表达后再试")
             
             print(f"✅ 语音识别成功: '{text[:50]}...'")
             return text
@@ -203,8 +373,8 @@ class OpenAIService:
         1. GPT-4o-mini 一次性生成润色 + 标题 + 反馈（串行，3-5秒）
         
         新逻辑：
-        1. Haiku 生成润色 + 标题（1-2秒）
-        2. Sonnet 生成反馈（基于原始文本，2-3秒）
+        1. GPT-4o-mini 生成润色 + 标题（字段 haiku，1-2秒）
+        2. GPT-4o-mini 生成反馈（字段 sonnet，基于原始文本，2-3秒）
         3. 两个任务并行执行，总耗时 = max(1-2, 2-3) = 2-3秒
         
         为什么基于原始文本生成反馈？
@@ -229,8 +399,8 @@ class OpenAIService:
             
             # 🔥 关键改动：并行执行两个任务
             print(f"🚀 启动并行处理...")
-            print(f"   - 任务1: Haiku 润色 + 标题")
-            print(f"   - 任务2: Sonnet 反馈（基于原始文本）")
+            print(f"   - 任务1: GPT-4o-mini 润色 + 标题（字段 haiku）")
+            print(f"   - 任务2: GPT-4o-mini 暖心反馈（字段 sonnet，基于原始文本）")
             
             # 创建两个异步任务
             polish_task = self._call_claude_haiku_for_polish(text, detected_lang)
@@ -441,7 +611,7 @@ Output: {{"title": "公园里的花", "polished_content": "今天天气很好，
             }
     
     # ========================================================================
-    # 🔥 新增:Claude Sonnet 调用（AI 反馈）
+    # 🔥 新增: OpenAI GPT-4o-mini 调用（AI 反馈）
     # ========================================================================
     
     async def _call_claude_sonnet_for_feedback(
@@ -451,12 +621,12 @@ Output: {{"title": "公园里的花", "polished_content": "今天天气很好，
         user_name: Optional[str] = None
     ) -> str:
         """
-        🔥 新增方法：调用 Claude Sonnet 生成温暖的 AI 反馈
+        🔥 新增方法：调用 OpenAI GPT-4o-mini 生成温暖的 AI 反馈
         
-        为什么用 Sonnet？
-        - 共情能力强（理解情感细腻）
-        - 中文表达自然（比 GPT 更好）
-        - 温暖有深度（符合 Thankly 品牌调性）
+        为什么选择 GPT-4o-mini？
+        - 共情能力稳定（避免 Claude fallback）
+        - 中英文表达自然（与润色模型一致）
+        - 单一供应商，部署更省心（TestFlight 验证通过）
         
         为什么基于原始文本？
         - 更真实的情感
@@ -467,7 +637,7 @@ Output: {{"title": "公园里的花", "polished_content": "今天天气很好，
             温暖的反馈文字（简洁有力，不超过用户输入长度）
         """
         try:
-            print(f"💬 Sonnet: 开始生成反馈（基于原始文本）...")
+            print(f"💬 GPT-4o-mini: 开始生成反馈（基于原始文本）...")
             print(f"👤 用户名字: {user_name if user_name else '未提供'}")
             
             # 计算用户输入长度，用于动态调整反馈长度
@@ -553,96 +723,53 @@ Remember: Be warm, be brief, be personal. Quality over quantity."""
             else:
                 user_prompt = f"Someone just shared this with you:\n\n{text}\n\nRespond with warmth and empathy:"
             
-            # 调用 Bedrock API（Claude 3.5 格式）
-            # 动态调整 max_tokens：根据用户输入长度，但不超过200
-            max_tokens = min(max(user_text_length // 2, 50), 200)
-            
-            request_body = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "temperature": 0.7,
-                "system": system_prompt,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": user_prompt
-                    }
-                ]
-            }
-            
-            # 🔥 核心：调用 Bedrock（带重试机制，处理限流）
-            print(f"📤 Sonnet: 发送请求到 Bedrock...")
+            # 调用 OpenAI Chat Completions API
+            # 动态调整 max_tokens：根据用户输入长度，预留昵称与提示空间
+            estimated_output_length = max_feedback_length + 40
+            max_tokens = max(200, min(int(estimated_output_length * 1.2), 800))
+
+            print(f"📤 GPT-4o-mini: 发送请求到 OpenAI...")
             print(f"   模型: {self.MODEL_CONFIG['sonnet']}")
-            print(f"   区域: {self.bedrock_client.meta.region_name}")
             print(f"   用户名字: {user_name if user_name else '未提供'}")
             print(f"   System prompt 前100字符: {system_prompt[:100]}...")
+
+            response = await asyncio.to_thread(
+                self.openai_client.chat.completions.create,
+                model=self.MODEL_CONFIG["sonnet"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=max_tokens,
+            )
+
+            content = response.choices[0].message.content if response.choices else ""
+            if not content:
+                raise ValueError("OpenAI 返回空响应")
+
+            feedback = content.strip()
+            print(f"✅ GPT-4o-mini: 收到反馈，长度 {len(feedback)} 字符")
             
-            # 注意：boto3 invoke_model 会自动处理 content-type
-            # 需要确保 body 是 bytes 格式
-            request_bytes = json.dumps(request_body).encode('utf-8')
-            
-            # 🔥 实现带指数退避的重试机制（专门处理限流）
-            # 增加重试间隔，减少限流概率
-            max_retries = 5  # 最多重试5次
-            base_delay = 2.0  # 基础延迟2秒（从1秒增加到2秒，减少限流）
-            
-            for attempt in range(max_retries):
-                try:
-                    response = await asyncio.to_thread(
-                        self.bedrock_client.invoke_model,
-                        modelId=self.MODEL_CONFIG["sonnet"],
-                        body=request_bytes
+            if user_name and user_name.strip():
+                trimmed_feedback = feedback.lstrip()
+                starts_with_name = trimmed_feedback.lower().startswith(user_name.lower())
+                contains_name = user_name.lower() in trimmed_feedback.lower()
+                
+                if not starts_with_name:
+                    print(
+                        f"⚠️ 反馈未以名字开头，自动修正: user_name={user_name}, feedback='{feedback}'"
                     )
-                    # 成功，跳出重试循环
-                    break
-                    
-                except ClientError as e:
-                    error_code = e.response.get('Error', {}).get('Code', '')
-                    
-                    # 如果是限流错误，进行重试
-                    if error_code == 'ThrottlingException' and attempt < max_retries - 1:
-                        # 指数退避：2秒、4秒、8秒、16秒、32秒（从1秒基础延迟改为2秒）
-                        delay = base_delay * (2 ** attempt)
-                        print(f"⚠️ Sonnet: 遇到限流，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{max_retries})...")
-                        print(f"   💡 提示：Sonnet 限流频繁，可能是请求频率过高。建议稍后再试。")
-                        await asyncio.sleep(delay)
-                        continue
-                    else:
-                        # 其他错误或重试次数用尽，抛出异常
-                        raise
+                    separator = "，" if language == "Chinese" else ", "
+                    feedback = f"{user_name}{separator}{trimmed_feedback}"
+                elif not contains_name:
+                    print(
+                        f"⚠️ 反馈未包含名字，追加: user_name={user_name}, feedback='{feedback}'"
+                    )
+                    separator = "，" if language == "Chinese" else ", "
+                    feedback = f"{user_name}{separator}{trimmed_feedback}"
             
-            # 解析响应
-            response_bytes = response['body'].read()
-            if not response_bytes:
-                raise ValueError("Bedrock 返回空响应")
-            
-            response_body = json.loads(response_bytes)
-            print(f"✅ Sonnet: 收到响应，状态码: {response.get('ResponseMetadata', {}).get('HTTPStatusCode', 'N/A')}")
-            
-            # 提取反馈内容并打印（用于调试）
-            if 'content' in response_body and len(response_body['content']) > 0:
-                feedback_text = response_body['content'][0].get('text', '')
-                print(f"📝 Sonnet 反馈内容: {feedback_text[:100]}...")
-                # 检查是否包含用户名字
-                if user_name and user_name.strip():
-                    if user_name.lower() in feedback_text.lower():
-                        print(f"✅ 反馈中包含用户名字 '{user_name}'")
-                    else:
-                        print(f"⚠️ 警告：反馈中未包含用户名字 '{user_name}'！")
-                        print(f"   反馈内容: {feedback_text}")
-            
-            # 检查响应结构
-            if 'content' not in response_body:
-                print(f"⚠️ Sonnet: 响应结构异常: {response_body}")
-                raise ValueError(f"Bedrock 响应格式错误: 缺少 'content' 字段")
-            
-            if not response_body['content'] or len(response_body['content']) == 0:
-                print(f"⚠️ Sonnet: 响应内容为空")
-                raise ValueError("Bedrock 返回空内容")
-            
-            feedback = response_body['content'][0]['text'].strip()
-            
-            print(f"✅ Sonnet: 反馈生成完成")
+            print(f"✅ GPT-4o-mini: 反馈生成完成")
             print(f"   反馈: {feedback[:50]}...")
             
             return feedback
@@ -650,26 +777,21 @@ Remember: Be warm, be brief, be personal. Quality over quantity."""
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
-            print(f"❌ Sonnet 调用失败: {error_type}: {error_msg}")
+            print(f"❌ GPT-4o-mini 反馈调用失败: {error_type}: {error_msg}")
             
             # 详细错误信息
             import traceback
             error_trace = traceback.format_exc()
-            print(f"📍 Sonnet 完整错误堆栈:")
+            print(f"📍 GPT-4o-mini 反馈完整错误堆栈:")
             print(error_trace)
             
             # 检查常见错误类型
-            if "ThrottlingException" in error_type or "Throttling" in error_msg:
-                print(f"⚠️ AWS Bedrock 限流: 请求频率过高，已尝试重试但仍失败")
-                print(f"💡 建议: 稍后重试，或检查 AWS 账户的 Bedrock 配额限制")
-            elif "CredentialsError" in error_type or "NoCredentialsError" in error_type:
-                print(f"⚠️ AWS 凭证错误: 请配置 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY")
-            elif "ValidationException" in error_type:
-                print(f"⚠️ Bedrock API 格式错误: 请检查模型 ID 和请求格式")
-            elif "AccessDeniedException" in error_type:
-                print(f"⚠️ 权限不足: 请检查 IAM 权限是否包含 bedrock:InvokeModel")
-            elif "ResourceNotFoundException" in error_type:
-                print(f"⚠️ 模型不存在: 请检查模型 ID 是否正确")
+            if "RateLimit" in error_type or "rate limit" in error_msg.lower():
+                print(f"⚠️ OpenAI 限流: 请求频率过高，建议稍后重试或调整速率")
+            elif "AuthenticationError" in error_type or "InvalidApiKey" in error_type:
+                print(f"⚠️ OpenAI API Key 错误: 请检查 OPENAI_API_KEY 环境变量")
+            elif "APIConnectionError" in error_type:
+                print(f"⚠️ OpenAI API 连接错误: 请检查网络连接")
             
             # 降级方案
             return "感谢分享你的这一刻。" if language == "Chinese" else "Thanks for sharing this moment."
@@ -868,11 +990,11 @@ service = OpenAIService()
 # 2. 语音转文字（Whisper）
 text = await service.transcribe_audio(audio_bytes, "recording.m4a")
 
-# 3. 并行处理：润色（Haiku）+ 反馈（Sonnet）
+# 3. 并行处理：润色（haiku 字段）+ 反馈（sonnet 字段）
 result = await service.polish_content_multilingual(text)
 
 # 4. 使用结果
-print(f"标题: {result['title']}")        # Haiku 生成
-print(f"内容: {result['polished_content']}")  # Haiku 润色
-print(f"反馈: {result['feedback']}")      # Sonnet 生成
+print(f"标题: {result['title']}")        # GPT-4o-mini（haiku 字段）生成
+print(f"内容: {result['polished_content']}")  # GPT-4o-mini（haiku 字段）润色
+print(f"反馈: {result['feedback']}")      # GPT-4o-mini（sonnet 字段）生成
 """
