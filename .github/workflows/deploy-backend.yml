@@ -4,11 +4,11 @@ name: Deploy Backend to AWS Lambda
 on:
   push:
     branches:
-      - master  # 主分支
-      - main    # 如果使用 main 分支
+      - master # 主分支
+      - main # 如果使用 main 分支
     paths:
-      - 'backend/**'  # 只监听 backend 目录的变更
-      - '.github/workflows/deploy-backend.yml'  # 工作流文件本身变更也触发
+      - "backend/**" # 只监听 backend 目录的变更
+      - ".github/workflows/deploy-backend.yml" # 工作流文件本身变更也触发
 
   # 也可以手动触发（在 GitHub Actions 页面点击 "Run workflow"）
   workflow_dispatch:
@@ -23,7 +23,7 @@ env:
 jobs:
   deploy:
     name: Build and Deploy to Lambda
-    runs-on: ubuntu-latest  # 使用 Ubuntu 虚拟机运行
+    runs-on: ubuntu-latest # 使用 Ubuntu 虚拟机运行
 
     steps:
       # 步骤 1: 检出代码
@@ -81,5 +81,3 @@ jobs:
           echo "✅ 部署成功！"
           echo "Lambda 函数: ${{ env.LAMBDA_FUNCTION_NAME }}"
           echo "镜像: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO_NAME }}:latest"
-
-
