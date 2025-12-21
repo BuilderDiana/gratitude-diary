@@ -82,3 +82,4 @@ jobs:
           echo "Lambda 函数: ${{ env.LAMBDA_FUNCTION_NAME }}"
           echo "镜像: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO_NAME }}:latest"
 
+
