@@ -242,5 +242,6 @@ eas build --platform android
 **版本**：1.0.0  
 **最后更新**：2025-12-21
 
-Made with ❤️ by [Your Name]
+Made with ❤️ by Diana
+
 
