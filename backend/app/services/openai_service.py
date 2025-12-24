@@ -403,8 +403,8 @@ class OpenAIService:
             print(f"   - 任务2: GPT-4o-mini 暖心反馈（字段 sonnet，基于原始文本）")
             
             # 创建两个异步任务
-            polish_task = self._call_claude_haiku_for_polish(text, detected_lang)
-            feedback_task = self._call_claude_sonnet_for_feedback(text, detected_lang, user_name)
+            polish_task = self._polish_and_generate_title(text, detected_lang)
+            feedback_task = self._generate_ai_feedback(text, detected_lang, user_name)
             
             # 并行执行并等待结果
             polish_result, feedback = await asyncio.gather(
@@ -449,10 +449,10 @@ class OpenAIService:
             return self._create_fallback_result(text)
     
     # ========================================================================
-    # 🔥 新增：Claude Haiku 调用（润色 + 标题）
+    # 🔥 润色内容并生成标题（使用 GPT-4o-mini）
     # ========================================================================
     
-    async def _call_claude_haiku_for_polish(
+    async def _polish_and_generate_title(
         self, 
         text: str,
         language: str
@@ -473,28 +473,36 @@ class OpenAIService:
             print(f"🎨 GPT-4o-mini: 开始润色和生成标题...")
             
             # 构建 prompt
-            system_prompt = f"""You are a gentle diary editor. Your task is to polish the user's diary entry and create a title.
+            system_prompt = """You are a gentle diary editor. Your task is to polish the user's diary entry and create a title.
 
-Language: Keep everything in {language}. NEVER translate.
+Language: IMPORTANT - Detect the user's language and respond in THE SAME LANGUAGE. If user writes in Japanese, respond in Japanese. If user writes in Korean, respond in Korean. If user writes in Chinese, respond in Chinese. NEVER translate to a different language.
 
 Your responsibilities:
 1. Fix obvious grammar/typos
 2. Make the text flow naturally
 3. Keep it ≤115% of original length
 4. **CRITICAL: Preserve ALL original content. Do NOT delete or omit any part of the user's entry.**
-5. Create a short, warm, poetic, meaningful title (6-18 words)
+5. Create a short, warm, poetic, meaningful title IN THE SAME LANGUAGE as the user's input
 
 Style: Natural, warm, authentic. Don't over-edit.
 
 Response format (JSON only):
-{{
-  "title": "6-18 words in {language}",
-  "polished_content": "fixed text, same language - MUST include all original content"
-}}
+{
+  "title": "Concise words in USER'S LANGUAGE",
+  "polished_content": "fixed text, SAME LANGUAGE as user - MUST include all original content"
+}
 
-Example:
+Example (Chinese input):
 Input: "今天天气很好我去了公园看到了很多花"
-Output: {{"title": "公园里的花", "polished_content": "今天天气很好，我去了公园，看到了很多花。"}}"""
+Output: {"title": "公园里的花", "polished_content": "今天天气很好，我去了公园，看到了很多花。"}
+
+Example (Japanese input):
+Input: "今日は天気がよかった公園に行った"
+Output: {"title": "公園での一日", "polished_content": "今日は天気がよかった。公園に行った。"}
+
+Example (English input):
+Input: "today was good i went to park"
+Output: {"title": "A Day at the Park", "polished_content": "Today was good. I went to the park."}"""
 
             user_prompt = f"Please polish this diary entry (preserve ALL content):\n\n{text}"
             
@@ -611,10 +619,10 @@ Output: {{"title": "公园里的花", "polished_content": "今天天气很好，
             }
     
     # ========================================================================
-    # 🔥 新增: OpenAI GPT-4o-mini 调用（AI 反馈）
+    # 🔥 生成温暖的 AI 反馈（使用 GPT-4o-mini）
     # ========================================================================
     
-    async def _call_claude_sonnet_for_feedback(
+    async def _generate_ai_feedback(
         self, 
         text: str,
         language: str,
@@ -661,7 +669,7 @@ Output: {{"title": "公园里的花", "polished_content": "今天天气很好，
                 # 有用户名字时，明确规定必须使用名字
                 system_prompt = f"""You are a warm, empathetic listener responding to {user_name}'s diary entry.
 
-Language: Respond in {language} ONLY. NEVER translate.
+Language: IMPORTANT - Detect the user's language from their diary entry and respond in THE SAME LANGUAGE. If they write in Japanese, respond in Japanese. If Korean, respond in Korean. Match their language exactly. NEVER translate.
 
 ⚠️ CRITICAL RULE - YOU MUST FOLLOW THIS:
 Your response MUST start with "{user_name}" (followed by a comma in English or a Chinese comma in Chinese), then your message. 
@@ -696,7 +704,7 @@ REMEMBER:
                 # 没有用户名字时，使用通用提示
                 system_prompt = f"""You are a warm, empathetic listener responding to someone's diary entry.
 
-Language: Respond in {language} ONLY. NEVER translate.
+Language: IMPORTANT - Detect the user's language from their diary entry and respond in THE SAME LANGUAGE. If they write in Japanese, respond in Japanese. If Korean, respond in Korean. Match their language exactly. NEVER translate.
 
 Your style:
 - Warm and genuine (like a close friend)
@@ -754,20 +762,19 @@ Remember: Be warm, be brief, be personal. Quality over quantity."""
             if user_name and user_name.strip():
                 trimmed_feedback = feedback.lstrip()
                 starts_with_name = trimmed_feedback.lower().startswith(user_name.lower())
-                contains_name = user_name.lower() in trimmed_feedback.lower()
+                
+                # 智能分隔符：根据反馈内容判断用中文逗号还是英文逗号
+                # CJK 字符（中日韩）使用中文逗号，其他使用英文逗号
+                import re
+                has_cjk = bool(re.search(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', trimmed_feedback))
+                separator = "，" if has_cjk else ", "
                 
                 if not starts_with_name:
                     print(
                         f"⚠️ 反馈未以名字开头，自动修正: user_name={user_name}, feedback='{feedback}'"
                     )
-                    separator = "，" if language == "Chinese" else ", "
                     feedback = f"{user_name}{separator}{trimmed_feedback}"
-                elif not contains_name:
-                    print(
-                        f"⚠️ 反馈未包含名字，追加: user_name={user_name}, feedback='{feedback}'"
-                    )
-                    separator = "，" if language == "Chinese" else ", "
-                    feedback = f"{user_name}{separator}{trimmed_feedback}"
+                    print(f"✅ 修正后: {feedback[:50]}...")
             
             print(f"✅ GPT-4o-mini: 反馈生成完成")
             print(f"   反馈: {feedback[:50]}...")
