@@ -86,7 +86,7 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
 
     try {
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"], // ✅ 修复：使用新的 API
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8, // 压缩质量，节省空间
@@ -116,7 +116,7 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"], // ✅ 修复：使用新的 API
         allowsMultipleSelection: true, // 支持多选
         quality: 0.8, // 压缩质量
         selectionLimit: remainingSlots, // 限制选择数量

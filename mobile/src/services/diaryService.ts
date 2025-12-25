@@ -233,7 +233,7 @@ export async function uploadDiaryImages(
       // 检测图片类型（从URI中获取）
       let mimeType = "image/jpeg"; // 默认JPEG
       let extension = "jpg";
-      
+
       if (uri.toLowerCase().endsWith(".png")) {
         mimeType = "image/png";
         extension = "png";
