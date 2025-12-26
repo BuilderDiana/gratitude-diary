@@ -26,6 +26,20 @@ class DiaryUpdate(BaseModel):
             }
         }
 
+class ImageOnlyDiaryCreate(BaseModel):
+    """创建纯图片日记的请求数据"""
+    image_urls: List[str] = Field(..., min_items=1, max_items=9, description="图片URL列表（最多9张）")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "image_urls": [
+                    "https://s3.amazonaws.com/.../image1.jpg",
+                    "https://s3.amazonaws.com/.../image2.jpg"
+                ]
+            }
+        }
+
 class DiaryResponse(BaseModel):
     """返回给前端的日记数据"""
     diary_id: str = Field(..., description="日记ID")

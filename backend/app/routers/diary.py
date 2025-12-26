@@ -14,7 +14,7 @@ import re
 import json
 from datetime import datetime, timezone
 
-from ..models.diary import DiaryCreate, DiaryResponse, DiaryUpdate
+from ..models.diary import DiaryCreate, DiaryResponse, DiaryUpdate, ImageOnlyDiaryCreate
 from ..services.openai_service import OpenAIService
 from ..services.dynamodb_service import DynamoDBService
 from ..services.s3_service import S3Service
@@ -467,7 +467,7 @@ async def upload_diary_images(
 
 @router.post("/image-only", response_model=DiaryResponse, summary="Create image-only diary")
 async def create_image_only_diary(
-    image_urls: List[str],
+    data: ImageOnlyDiaryCreate,
     user: Dict = Depends(get_current_user)
 ):
     """
@@ -492,6 +492,8 @@ async def create_image_only_diary(
         
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user")
+        
+        image_urls = data.image_urls
         
         if not image_urls or len(image_urls) == 0:
             raise HTTPException(
