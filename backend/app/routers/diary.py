@@ -605,10 +605,11 @@ async def create_image_only_diary(
         # Create diary entry in database
         diary = db_service.create_diary(
             user_id=user_id,
-            content=content,
+            original_content=content,
             polished_content=content,
-            title=title,
             ai_feedback="",  # No AI feedback for image-only diaries
+            language="zh" if has_chinese else "en",
+            title=title,
             audio_url=None,
             image_urls=image_urls
         )
