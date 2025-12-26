@@ -415,10 +415,17 @@ export default function DiaryListScreen() {
           return false;
         }
 
-        const hasContent =
+        // 检查是否有内容：文字内容 或 图片 或 音频
+        const hasTextContent =
           (diary.polished_content &&
             diary.polished_content.trim().length > 0) ||
           (diary.original_content && diary.original_content.trim().length > 0);
+        
+        const hasImages = diary.image_urls && diary.image_urls.length > 0;
+        const hasAudio = diary.audio_url && diary.audio_url.trim().length > 0;
+        
+        // 只要有文字、图片或音频中的任意一种，就认为是有效日记
+        const hasContent = hasTextContent || hasImages || hasAudio;
 
         if (!hasContent) {
           console.log("⚠️ 跳过无效日记: 缺少内容", diary);

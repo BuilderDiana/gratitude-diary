@@ -25,7 +25,9 @@
         "NSPhotoLibraryUsageDescription": "We need photo library access to select photos for your diary entries.",
         "NSFaceIDUsageDescription": "Use Face ID to sign in quickly.",
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -58,7 +60,8 @@
           "photosPermission": "The app needs access to your photos to let you select images for diary entries.",
           "cameraPermission": "The app needs access to your camera to let you take photos for diary entries."
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "eas": {
