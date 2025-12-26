@@ -347,14 +347,17 @@ export default function DiaryDetailScreen({
     const isEditing = isEditingTitle || isEditingContent;
     const isImageOnly = isImageOnlyDiary();
 
-    // 纯图片日记：只显示浮动关闭按钮
+    // 纯图片日记：显示完整 header（绝对定位在顶部）
     if (isImageOnly) {
       return (
         <View style={styles.imageOnlyHeader}>
-          <TouchableOpacity
-            onPress={closeSheet}
-            style={styles.imageOnlyCloseButton}
-          >
+          <View style={styles.dateContainer}>
+            <Text style={styles.dateText}>
+              {diary ? formatDateTime(diary.created_at) : ""}
+            </Text>
+          </View>
+
+          <TouchableOpacity onPress={closeSheet} style={styles.closeButton}>
             <Ionicons name="close-outline" size={24} color="#666" />
           </TouchableOpacity>
         </View>
@@ -394,7 +397,6 @@ export default function DiaryDetailScreen({
           // 预览模式
           <>
             <View style={styles.dateContainer}>
-              <Ionicons name="calendar-outline" size={16} color="#666" />
               <Text style={styles.dateText}>
                 {diary ? formatDateTime(diary.created_at) : ""}
               </Text>
@@ -438,34 +440,104 @@ export default function DiaryDetailScreen({
     return hasImages && hasNoContent && hasNoTitle;
   };
 
+  // 图片轮播当前索引状态
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+
   const renderDiaryDetail = () => {
     if (!diary) return null;
 
     // 如果是纯图片日记，只显示图片轮播
     if (isImageOnlyDiary()) {
+      const imageUrls = diary.image_urls || [];
+
+      // 调试：检查图片数据
+      if (imageUrls.length === 0) {
+        console.warn("⚠️ 纯图片日记但没有图片URLs");
+      }
+
       return (
         <View style={styles.imageOnlyContainer}>
+          {/* Header 在顶部（绝对定位） */}
+          {renderDetailHeader()}
+
           <FlatList
-            data={diary.image_urls || []}
+            data={imageUrls}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
             keyExtractor={(item, index) => `${item}-${index}`}
-            renderItem={({ item }) => (
-              <View style={styles.imageSlide}>
-                <Image
-                  source={{ uri: item }}
-                  style={styles.fullScreenImage}
-                  resizeMode="contain"
-                />
-              </View>
-            )}
+            renderItem={({ item }) => {
+              console.log("🖼️ 渲染图片:", item);
+              return (
+                <View
+                  style={[
+                    styles.imageSlide,
+                    {
+                      maxHeight: MAX_IMAGE_HEIGHT,
+                      height: MAX_IMAGE_HEIGHT, // 明确设置容器高度
+                    },
+                  ]}
+                >
+                  <Image
+                    source={{ uri: item }}
+                    style={{
+                      width: windowWidth,
+                      height: MAX_IMAGE_HEIGHT,
+                      maxWidth: windowWidth,
+                      maxHeight: MAX_IMAGE_HEIGHT,
+                    }}
+                    resizeMode="contain"
+                    onLoad={() => {
+                      console.log("✅ 图片加载成功:", item);
+                    }}
+                    onError={(error) => {
+                      console.error(
+                        "❌ 图片加载失败:",
+                        item,
+                        error.nativeEvent.error
+                      );
+                    }}
+                  />
+                </View>
+              );
+            }}
+            style={[
+              styles.imageList,
+              {
+                paddingTop: Platform.OS === "ios" ? 52 : 40, // header 实际高度：44 + 8 = 52px
+                paddingBottom: Platform.OS === "ios" ? 50 : 30,
+              },
+            ]}
+            contentContainerStyle={{ flexGrow: 1 }}
             getItemLayout={(data, index) => ({
               length: Dimensions.get("window").width,
               offset: Dimensions.get("window").width * index,
               index,
             })}
+            onMomentumScrollEnd={(event) => {
+              const index = Math.round(
+                event.nativeEvent.contentOffset.x /
+                  Dimensions.get("window").width
+              );
+              setCurrentImageIndex(index);
+            }}
           />
+
+          {/* 底部点状指示器 */}
+          {imageUrls.length > 1 && (
+            <View style={styles.imageIndicatorContainer}>
+              {imageUrls.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.imageIndicatorDot,
+                    index === currentImageIndex &&
+                      styles.imageIndicatorDotActive,
+                  ]}
+                />
+              ))}
+            </View>
+          )}
         </View>
       );
     }
@@ -565,10 +637,14 @@ export default function DiaryDetailScreen({
   const slideY = useRef(new Animated.Value(300)).current;
   const [visible, setVisible] = useState(false);
   const windowHeight = Dimensions.get("window").height;
+  const windowWidth = Dimensions.get("window").width;
   const MAX_SHEET_RATIO = 0.85;
   const maxSheetHeight = Math.round(windowHeight * MAX_SHEET_RATIO);
   const MIN_SHEET_HEIGHT = 160;
   const [contentHeight, setContentHeight] = useState(0);
+
+  // 图片显示区域最大高度（屏幕高度的 70%）
+  const MAX_IMAGE_HEIGHT = Math.round(windowHeight * 0.7);
 
   // ✅ 动态高度:编辑时用最大高度,预览时自适应,纯图片日记全屏
   const isEditing = isEditingTitle || isEditingContent;
@@ -602,7 +678,11 @@ export default function DiaryDetailScreen({
   return (
     <View style={styles.container}>
       {/* 黑色遮罩：静态全屏，点击关闭 */}
-      <Pressable style={styles.overlay} onPress={closeSheet} />
+      <Pressable
+        style={styles.overlay}
+        onPress={closeSheet}
+        // 确保可以点击（纯图片日记时 modal 全屏，但 overlay 仍然在下方）
+      />
 
       {/* 底部卡片：与ActionSheet一致，仅底部上弹 */}
       <Animated.View
@@ -612,43 +692,49 @@ export default function DiaryDetailScreen({
             transform: [{ translateY: slideY }],
             height: sheetHeight,
             maxHeight: maxSheetHeight,
+            backgroundColor: isImageOnly ? "transparent" : "#FFFFFF",
+            borderTopLeftRadius: isImageOnly ? 0 : 20,
+            borderTopRightRadius: isImageOnly ? 0 : 20,
           },
         ]}
+        pointerEvents={isImageOnly ? "box-none" : "auto"}
       >
-        <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
+        <SafeAreaView
+          style={styles.safeArea}
+          edges={isImageOnly ? [] : ["bottom"]}
+        >
           {loading ? (
             renderLoading()
           ) : error ? (
             renderError()
           ) : (
             <>
-              {/* ✅ 添加Header */}
-              {renderDetailHeader()}
-
               {/* 纯图片日记：直接显示图片轮播，不使用 ScrollView */}
               {isImageOnlyDiary() ? (
                 renderDiaryDetail()
               ) : (
-                /* 普通日记：使用 ScrollView */
-                <KeyboardAvoidingView
-                  style={{ flex: 1 }}
-                  behavior={Platform.OS === "ios" ? "padding" : "height"}
-                  keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
-                >
-                  <ScrollView
-                    style={styles.scrollView}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator={false}
-                    onContentSizeChange={(_, h) => setContentHeight(h + 24)}
-                    bounces
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="interactive"
+                <>
+                  {/* ✅ 添加Header */}
+                  {renderDetailHeader()}
+                  {/* 普通日记：使用 ScrollView */}
+                  <KeyboardAvoidingView
+                    style={{ flex: 1 }}
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
                   >
-                    {/* ✅ 拖拽指示器 */}
-                    <View style={styles.dragIndicator} />
-                    {renderDiaryDetail()}
-                  </ScrollView>
-                </KeyboardAvoidingView>
+                    <ScrollView
+                      style={styles.scrollView}
+                      contentContainerStyle={styles.scrollContent}
+                      showsVerticalScrollIndicator={false}
+                      onContentSizeChange={(_, h) => setContentHeight(h + 24)}
+                      bounces
+                      keyboardShouldPersistTaps="handled"
+                      keyboardDismissMode="interactive"
+                    >
+                      {renderDiaryDetail()}
+                    </ScrollView>
+                  </KeyboardAvoidingView>
+                </>
               )}
             </>
           )}
@@ -683,6 +769,7 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
+    zIndex: 1,
   },
 
   modal: {
@@ -702,6 +789,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 10,
     elevation: 10,
+    zIndex: 2,
   },
 
   safeArea: {
@@ -858,9 +946,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 8,
+    paddingHorizontal: 20, // ⬅️ 调整这里：控制左右间距
+    paddingTop: 12, // ⬅️ 调整这里：控制顶部间距
+    paddingBottom: 8, // ⬅️ 调整这里：控制底部间距
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
     backgroundColor: "transparent",
@@ -953,37 +1041,68 @@ const styles = StyleSheet.create({
   },
 
   // ===== 纯图片日记样式 =====
-  imageOnlyHeader: {
-    position: "absolute",
-    top: -80,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingTop: Platform.OS === "ios" ? 50 : 20,
-    paddingRight: 16,
-    alignItems: "flex-end",
-  },
-  imageOnlyCloseButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
   imageOnlyContainer: {
     flex: 1,
     width: "100%",
     backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: "hidden",
+    position: "relative",
+  },
+  imageOnlyHeader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: Platform.OS === "ios" ? 20 : 20, // ⬅️ 调整这里：控制顶部间距（考虑状态栏）
+    paddingHorizontal: 16, // ⬅️ 调整这里：控制左右间距
+    paddingBottom: 8, // ⬅️ 调整这里：控制底部间距
+    zIndex: 100,
+    backgroundColor: "transparent",
+  },
+  imageList: {
+    flex: 1,
+    marginTop: 12,
   },
   imageSlide: {
     width: Dimensions.get("window").width,
-    height: "100%",
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    minHeight: 200, // 确保容器有最小高度
   },
   fullScreenImage: {
-    width: Dimensions.get("window").width,
-    height: "100%",
+    // 宽度和最大高度在 renderItem 中动态设置
+    // 使用 contain 模式时，高度会根据图片比例自动计算
+  },
+  // 点状指示器
+  imageIndicatorContainer: {
+    position: "absolute",
+    bottom: Platform.OS === "ios" ? 24 : 20,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    zIndex: 200,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  imageIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#F2E2C2", // 非活跃状态：灰色
+  },
+  imageIndicatorDotActive: {
+    backgroundColor: "#E56C45", // 活跃状态：主题色
+    width: 24, // 活跃状态更长
+    height: 8,
+    borderRadius: 4,
   },
 });

@@ -420,10 +420,10 @@ export default function DiaryListScreen() {
           (diary.polished_content &&
             diary.polished_content.trim().length > 0) ||
           (diary.original_content && diary.original_content.trim().length > 0);
-        
+
         const hasImages = diary.image_urls && diary.image_urls.length > 0;
         const hasAudio = diary.audio_url && diary.audio_url.trim().length > 0;
-        
+
         // 只要有文字、图片或音频中的任意一种，就认为是有效日记
         const hasContent = hasTextContent || hasImages || hasAudio;
 
@@ -1336,10 +1336,19 @@ export default function DiaryListScreen() {
     // 格式化日期和时间显示
     const displayDate = formatDateTime(item.created_at);
 
+    // 检测是否为纯图片日记
+    const isImageOnly =
+      item.image_urls &&
+      item.image_urls.length > 0 &&
+      (!item.title || item.title.trim() === "") &&
+      (!item.polished_content || item.polished_content.trim() === "");
+
     // 生成无障碍标签（包含索引和总数信息）
     const accessibilityLabel = `${t("accessibility.list.diaryCard")} ${
       index + 1
-    } ${t("accessibility.list.of")} ${diaries.length}, ${item.title}`;
+    } ${t("accessibility.list.of")} ${diaries.length}, ${
+      item.title || "图片日记"
+    }`;
 
     return (
       <TouchableOpacity
@@ -1350,10 +1359,90 @@ export default function DiaryListScreen() {
         accessibilityHint={t("accessibility.list.cardHint")}
         accessibilityRole="button"
       >
-        {/* 日期 + 三点菜单图标 */}
-        <View style={styles.cardHeader}>
+        {/* 纯图片日记：只显示图片，不显示标题和内容 */}
+        {isImageOnly ? (
+          <>
+            {/* 图片缩略图 */}
+            {item.image_urls && item.image_urls.length > 0 && (
+              <View style={styles.imageGrid}>
+                {item.image_urls.slice(0, 3).map((url, index) => (
+                  <Image
+                    key={index}
+                    source={{ uri: url }}
+                    style={styles.imageThumbnail}
+                    resizeMode="cover"
+                  />
+                ))}
+                {item.image_urls.length > 3 && (
+                  <View style={[styles.imageThumbnail, styles.moreBadge]}>
+                    <Text style={styles.moreText}>
+                      +{item.image_urls.length - 3}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            {/* AI生成的标题 */}
+            {item.title && item.title.trim() !== "" && (
+              <Text style={styles.cardTitle} numberOfLines={2}>
+                {item.title}
+              </Text>
+            )}
+
+            {/* 日记内容 */}
+            {item.polished_content && item.polished_content.trim() !== "" && (
+              <Text
+                style={styles.cardContent}
+                numberOfLines={3}
+                ellipsizeMode="tail"
+              >
+                {item.polished_content}
+              </Text>
+            )}
+
+            {/* 图片缩略图（如果有） */}
+            {item.image_urls && item.image_urls.length > 0 && (
+              <View style={styles.imageGrid}>
+                {item.image_urls.slice(0, 3).map((url, index) => (
+                  <Image
+                    key={index}
+                    source={{ uri: url }}
+                    style={styles.imageThumbnail}
+                    resizeMode="cover"
+                  />
+                ))}
+                {item.image_urls.length > 3 && (
+                  <View style={[styles.imageThumbnail, styles.moreBadge]}>
+                    <Text style={styles.moreText}>
+                      +{item.image_urls.length - 3}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ✅ 使用统一的音频播放器组件 */}
+        <AudioPlayer
+          audioUrl={item.audio_url}
+          audioDuration={item.audio_duration}
+          isPlaying={currentPlayingId === item.diary_id}
+          currentTime={currentTime.get(item.diary_id) || 0}
+          totalDuration={
+            duration.get(item.diary_id) || item.audio_duration || 0
+          }
+          hasPlayedOnce={hasPlayedOnce.has(item.diary_id)}
+          onPlayPress={() => handlePlayAudio(item)}
+          style={styles.audioButton}
+        />
+
+        {/* 日期 + 三点菜单图标 - 移到底部 */}
+        <View style={styles.cardFooter}>
           <View style={styles.dateContainer}>
-            <Ionicons name="calendar-outline" size={16} color="#666" />
             <Text style={styles.cardDate}>{displayDate}</Text>
           </View>
 
@@ -1372,49 +1461,6 @@ export default function DiaryListScreen() {
             <Ionicons name="ellipsis-horizontal" size={20} color="#999" />
           </TouchableOpacity>
         </View>
-
-        {/* AI生成的标题 */}
-        <Text style={styles.cardTitle} numberOfLines={2}>
-          {item.title}
-        </Text>
-
-        {/* 日记内容 */}
-        <Text style={styles.cardContent} numberOfLines={3}>
-          {item.polished_content}
-        </Text>
-
-        {/* 图片缩略图（如果有） */}
-        {item.image_urls && item.image_urls.length > 0 && (
-          <View style={styles.imageGrid}>
-            {item.image_urls.slice(0, 3).map((url, index) => (
-              <Image
-                key={index}
-                source={{ uri: url }}
-                style={styles.imageThumbnail}
-                resizeMode="cover"
-              />
-            ))}
-            {item.image_urls.length > 3 && (
-              <View style={[styles.imageThumbnail, styles.moreBadge]}>
-                <Text style={styles.moreText}>+{item.image_urls.length - 3}</Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* ✅ 使用统一的音频播放器组件 */}
-        <AudioPlayer
-          audioUrl={item.audio_url}
-          audioDuration={item.audio_duration}
-          isPlaying={currentPlayingId === item.diary_id}
-          currentTime={currentTime.get(item.diary_id) || 0}
-          totalDuration={
-            duration.get(item.diary_id) || item.audio_duration || 0
-          }
-          hasPlayedOnce={hasPlayedOnce.has(item.diary_id)}
-          onPlayPress={() => handlePlayAudio(item)}
-          style={styles.audioButton}
-        />
       </TouchableOpacity>
     );
   };
@@ -1598,6 +1644,18 @@ export default function DiaryListScreen() {
           loadDiaries(); // 刷新日记列表
         }}
         maxImages={9}
+        onAddImage={() => {
+          // 在 ImageDiaryModal 内部已经处理了添加图片的逻辑
+          // 这里可以留空，或者添加额外的逻辑
+        }}
+        onAddVoice={() => {
+          setImageDiaryModalVisible(false);
+          setRecordingModalVisible(true);
+        }}
+        onAddText={() => {
+          setImageDiaryModalVisible(false);
+          setTextInputModalVisible(true);
+        }}
       />
 
       {/* Diary Detail Modal */}
@@ -1782,17 +1840,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
+    paddingTop: 20,
+    paddingBottom: 8,
     marginHorizontal: 20,
-    marginBottom: 16,
+    marginBottom: 12,
   },
 
-  cardHeader: {
+  cardFooter: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 4,
+    marginTop: 0, // ⬅️ 调整这里：控制时间区域距离上方内容的间距
+    paddingTop: 0, // ⬅️ 调整这里：控制时间区域内部的上间距
+    paddingBottom: 0, // ⬅️ 调整这里：控制时间区域内部的下间距
+    // 分割线已移除
   },
 
   dateContainer: {
@@ -1803,7 +1864,7 @@ const styles = StyleSheet.create({
   cardDate: {
     ...Typography.caption,
     color: "#666",
-    marginLeft: 6,
+    //marginLeft: 6,
   },
 
   cardTitle: {
@@ -1824,13 +1885,13 @@ const styles = StyleSheet.create({
   cardContent: {
     ...Typography.body,
     color: "#1A1A1A",
-    marginBottom: 12,
+    marginBottom: 4, // 减少底部间距，避免内容不足3行时出现多余空白
   },
-  
+
   // 图片网格样式
   imageGrid: {
     flexDirection: "row",
-    marginBottom: 12,
+    marginBottom: 4,
     gap: 8,
   },
   imageThumbnail: {
@@ -1848,12 +1909,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
-  },
-
-  cardFooter: {
-    borderTopWidth: 1,
-    borderTopColor: "#F0F0F0",
-    paddingTop: 12,
   },
 
   aiFeedbackContainer: {
@@ -1958,7 +2013,7 @@ const styles = StyleSheet.create({
   // ===== 音频播放器样式（使用统一组件）=====
   audioButton: {
     marginTop: 8,
-    marginBottom: 8,
+    marginBottom: 0,
   },
 
   // ===== 自定义 Action Sheet =====

@@ -21,6 +21,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { createImageOnlyDiary } from "../services/diaryService";
+import ImageInputIcon from "../assets/icons/addImageIcon.svg";
+import TextInputIcon from "../assets/icons/textInputIcon.svg";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const THUMBNAIL_SIZE = (SCREEN_WIDTH - 80) / 3; // 3列
@@ -30,6 +32,9 @@ interface ImageDiaryModalProps {
   onClose: () => void;
   onSuccess: () => void;
   maxImages?: number;
+  onAddImage?: () => void; // 添加图片回调
+  onAddVoice?: () => void; // 添加语音回调
+  onAddText?: () => void; // 添加文字回调
 }
 
 export default function ImageDiaryModal({
@@ -37,6 +42,9 @@ export default function ImageDiaryModal({
   onClose,
   onSuccess,
   maxImages = 9,
+  onAddImage,
+  onAddVoice,
+  onAddText,
 }: ImageDiaryModalProps) {
   const [images, setImages] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -292,6 +300,50 @@ export default function ImageDiaryModal({
               </TouchableOpacity>
             )}
           </ScrollView>
+
+          {/* 底部工具栏 */}
+          <View style={styles.bottomToolbar}>
+            {/* 图片按钮 */}
+            <TouchableOpacity
+              style={styles.toolbarButton}
+              onPress={() => {
+                if (onAddImage) {
+                  onAddImage();
+                } else {
+                  handleAddMore();
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <ImageInputIcon width={32} height={32} fill={"#332824"} />
+            </TouchableOpacity>
+
+            {/* 语音按钮 - 主按钮 */}
+            <TouchableOpacity
+              style={styles.toolbarRecordButton}
+              onPress={() => {
+                if (onAddVoice) {
+                  onAddVoice();
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="mic" size={26} color="#fff" />
+            </TouchableOpacity>
+
+            {/* 文字按钮 */}
+            <TouchableOpacity
+              style={styles.toolbarButton}
+              onPress={() => {
+                if (onAddText) {
+                  onAddText();
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <TextInputIcon width={32} height={32} fill={"#332824"} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* 确认弹窗 */}
@@ -441,7 +493,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "flex-start",
     paddingTop: 20,
-    paddingBottom: 40,
+    paddingBottom: 120, // 增加底部 padding，为工具栏留出空间
   },
   imageWrapper: {
     width: THUMBNAIL_SIZE,
@@ -543,6 +595,51 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#fff",
+  },
+
+  // 底部工具栏样式
+  bottomToolbar: {
+    position: "absolute",
+    bottom: 32,
+    left: 56,
+    right: 56,
+    backgroundColor: "#FAF6ED",
+    borderRadius: 200,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-evenly",
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    shadowColor: "#E56C45",
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  toolbarButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toolbarRecordButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#E56C45",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#E56C45",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });
 
