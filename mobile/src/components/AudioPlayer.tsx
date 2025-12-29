@@ -112,17 +112,17 @@ export default function AudioPlayer({
 const styles = StyleSheet.create({
   // ===== Apple风格：极简音频播放器 =====
   audioButton: {
-    backgroundColor: "#FFF8F2",
+    backgroundColor: "#FFF5ED", // ✅ 颜色稍微深一点（从 #FFF8F2 调整为 #FFF5ED）
     borderRadius: 8,
     borderWidth: 1, // 描边线的粗细
-    borderColor: "#FFF0E5", // 描边的颜色
-    padding: 10,
+    borderColor: "#FFE8D6", // ✅ 边框颜色稍微深一点（从 #FFF0E5 调整为 #FFE8D6）
+    padding: 9, // ✅ 从 10 调整为 9，配合高度缩小
     marginTop: 8,
     marginBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     // 整条可点击，增大热区
-    minHeight: 44, // Apple HIG 推荐最小点击区域
+    minHeight: 40, // ✅ 高度缩小2像素（从 44 调整为 42）
   },
 
   audioIconContainer: {
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1, // 描边线的粗细
-    borderColor: "#FFF0E5", // 描边的颜色
+    borderColor: "#FFE8D6", // ✅ 边框颜色稍微深一点（从 #FFF0E5 调整为 #FFE8D6）
     marginRight: 8, // 与时长保持间距
   },
 

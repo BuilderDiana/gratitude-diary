@@ -10,11 +10,13 @@ import {
   Lora_400Regular,
   Lora_500Medium,
   Lora_600SemiBold,
+  Lora_700Bold,
 } from "@expo-google-fonts/lora";
 import {
   NotoSerifSC_400Regular,
   NotoSerifSC_500Medium,
   NotoSerifSC_600SemiBold,
+  NotoSerifSC_700Bold,
 } from "@expo-google-fonts/noto-serif-sc";
 import React, { useEffect } from "react";
 import { View } from "react-native";
@@ -31,10 +33,12 @@ export default function App() {
     Lora_400Regular,
     Lora_500Medium,
     Lora_600SemiBold,
+    Lora_700Bold, // ✅ 新增 Bold 字重
     // Noto Serif SC 字体（中文优雅衬线字体）
     NotoSerifSC_400Regular,
     NotoSerifSC_500Medium,
     NotoSerifSC_600SemiBold,
+    NotoSerifSC_700Bold, // ✅ 新增 Bold 字重
   });
 
   // 字体未加载完成时，显示与 WelcomeScreen 一致的背景色（减少闪屏感）

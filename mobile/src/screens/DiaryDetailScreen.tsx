@@ -45,7 +45,11 @@ import AudioPlayer from "../components/AudioPlayer";
 // 🌍 导入翻译函数
 // ============================================================================
 import { t, getCurrentLocale } from "../i18n";
-import { Typography } from "../styles/typography";
+import {
+  Typography,
+  getFontFamilyForText,
+  detectTextLanguage,
+} from "../styles/typography";
 
 /**
  * 日记数据类型定义
@@ -359,7 +363,17 @@ export default function DiaryDetailScreen({
       return (
         <View style={styles.imageOnlyHeader}>
           <View style={styles.dateContainer}>
-            <Text style={styles.dateText}>
+            <Text
+              style={[
+                styles.dateText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    diary ? formatDateTime(diary.created_at) : "",
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {diary ? formatDateTime(diary.created_at) : ""}
             </Text>
           </View>
@@ -383,19 +397,49 @@ export default function DiaryDetailScreen({
             >
               <View style={styles.cancelButtonContent}>
                 <Ionicons name="arrow-back" size={20} color="#666" />
-                <Text style={styles.detailHeaderButtonText}>
+                <Text
+                  style={[
+                    styles.detailHeaderButtonText,
+                    {
+                      fontFamily: getFontFamilyForText(
+                        t("common.cancel"),
+                        "regular"
+                      ),
+                    },
+                  ]}
+                >
                   {t("common.cancel")}
                 </Text>
               </View>
             </TouchableOpacity>
 
-            <Text style={styles.detailHeaderTitle}>{t("common.edit")}</Text>
+            <Text
+              style={[
+                styles.detailHeaderTitle,
+                {
+                  fontFamily: getFontFamilyForText(t("common.edit"), "regular"),
+                },
+              ]}
+            >
+              {t("common.edit")}
+            </Text>
 
             <TouchableOpacity
               onPress={finishEditing}
               style={styles.detailHeaderButton}
             >
-              <Text style={[styles.detailHeaderButtonText, styles.saveText]}>
+              <Text
+                style={[
+                  styles.detailHeaderButtonText,
+                  styles.saveText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.done"),
+                      "semibold"
+                    ),
+                  },
+                ]}
+              >
                 {t("common.done")}
               </Text>
             </TouchableOpacity>
@@ -422,17 +466,53 @@ export default function DiaryDetailScreen({
   const renderLoading = () => (
     <View style={styles.loadingContainer}>
       <ActivityIndicator size="large" color="#E56C45" />
-      <Text style={styles.loadingText}>加载中...</Text>
+      <Text
+        style={[
+          styles.loadingText,
+          {
+            fontFamily: getFontFamilyForText("加载中...", "regular"),
+          },
+        ]}
+      >
+        加载中...
+      </Text>
     </View>
   );
 
   const renderError = () => (
     <View style={styles.errorContainer}>
       <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-      <Text style={styles.errorTitle}>加载失败</Text>
-      <Text style={styles.errorText}>{error}</Text>
+      <Text
+        style={[
+          styles.errorTitle,
+          {
+            fontFamily: getFontFamilyForText("加载失败", "semibold"),
+          },
+        ]}
+      >
+        加载失败
+      </Text>
+      <Text
+        style={[
+          styles.errorText,
+          {
+            fontFamily: getFontFamilyForText(error || "", "regular"),
+          },
+        ]}
+      >
+        {error}
+      </Text>
       <TouchableOpacity style={styles.retryButton} onPress={loadDiaryDetail}>
-        <Text style={styles.retryButtonText}>重试</Text>
+        <Text
+          style={[
+            styles.retryButtonText,
+            {
+              fontFamily: getFontFamilyForText("重试", "semibold"),
+            },
+          ]}
+        >
+          重试
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -561,60 +641,90 @@ export default function DiaryDetailScreen({
       );
     }
 
+    // ✅ 动态计算字体
+    const isChineseTitle = detectTextLanguage(diary.title || "") === "zh";
+    const isChineseContent =
+      detectTextLanguage(diary.polished_content || "") === "zh";
+
     // 普通日记：显示文字内容
     return (
       <>
-        {/* ✅ 图片缩略图（如果有图片）- 一行3个 */}
+        {/* ✅ 图片缩略图（如果有图片）- 动态列数 + 横向滚动 */}
         {diary.image_urls && diary.image_urls.length > 0 && (
           <View style={styles.imageThumbnailContainer}>
-            <View style={styles.imageThumbnailGrid}>
-              {diary.image_urls.map((url, index) => (
-                <TouchableOpacity
-                  key={`${url}-${index}`}
-                  style={[
-                    styles.imageThumbnailWrapper,
-                    (index + 1) % 3 === 0 && styles.imageThumbnailLastInRow, // 每行最后一个
-                  ]}
-                  onPress={() => {
-                    // ✅ 获取缩略图位置信息（用于动画）
-                    const thumbnailRef = thumbnailRefs.current[index];
-                    if (thumbnailRef) {
-                      thumbnailRef.measure(
-                        (x, y, width, height, pageX, pageY) => {
-                          setThumbnailLayout({
-                            x: pageX,
-                            y: pageY,
-                            width,
-                            height,
-                          });
-                          setFullScreenImageIndex(index);
-                          setFullScreenImageVisible(true);
-                        }
-                      );
-                    } else {
-                      // 如果 measure 失败，直接打开（无动画）
-                      setThumbnailLayout(null);
-                      setFullScreenImageIndex(index);
-                      setFullScreenImageVisible(true);
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <View
-                    ref={(ref) => {
-                      thumbnailRefs.current[index] = ref;
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.imageThumbnailScrollContent}
+            >
+              {(() => {
+                // ✅ 动态计算列数：<=3张用3列，>3张用4列
+                const numColumns = diary.image_urls.length > 3 ? 4 : 3;
+                const gap = 8;
+                const padding = 40; // container padding (20*2)
+                const screenWidth = Dimensions.get("window").width;
+                const availableWidth = screenWidth - padding;
+
+                // 计算图片尺寸
+                const imageSize =
+                  (availableWidth - (numColumns - 1) * gap) / numColumns;
+
+                return diary.image_urls.map((url, index) => (
+                  <TouchableOpacity
+                    key={`${url}-${index}`}
+                    style={[
+                      styles.imageThumbnailWrapper,
+                      {
+                        width: imageSize,
+                        height: imageSize,
+                        marginRight:
+                          index === diary.image_urls!.length - 1 ? 0 : gap,
+                      },
+                    ]}
+                    onPress={() => {
+                      const thumbnailRef = thumbnailRefs.current[index];
+                      if (thumbnailRef) {
+                        thumbnailRef.measure(
+                          (x, y, width, height, pageX, pageY) => {
+                            setThumbnailLayout({
+                              x: pageX,
+                              y: pageY,
+                              width,
+                              height,
+                            });
+                            setFullScreenImageIndex(index);
+                            setFullScreenImageVisible(true);
+                          }
+                        );
+                      } else {
+                        setThumbnailLayout(null);
+                        setFullScreenImageIndex(index);
+                        setFullScreenImageVisible(true);
+                      }
                     }}
-                    collapsable={false}
+                    activeOpacity={0.8}
                   >
-                    <Image
-                      source={{ uri: url }}
-                      style={styles.imageThumbnail}
-                      resizeMode="cover"
-                    />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <View
+                      ref={(ref) => {
+                        thumbnailRefs.current[index] = ref;
+                      }}
+                      collapsable={false}
+                    >
+                      <Image
+                        source={{ uri: url }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          borderRadius: 8,
+                          backgroundColor: "#f0f0f0",
+                        }}
+                        resizeMode="cover"
+                      />
+                    </View>
+                  </TouchableOpacity>
+                ));
+              })()}
+            </ScrollView>
           </View>
         )}
 
@@ -636,7 +746,15 @@ export default function DiaryDetailScreen({
           {/* 标题 */}
           {isEditingTitle ? (
             <TextInput
-              style={styles.editTitleInput}
+              style={[
+                styles.editTitleInput,
+                {
+                  fontFamily: getFontFamilyForText(
+                    editedTitle || diary.title || "",
+                    "bold"
+                  ),
+                },
+              ]}
               value={editedTitle}
               onChangeText={setEditedTitle}
               autoFocus
@@ -655,14 +773,37 @@ export default function DiaryDetailScreen({
               accessibilityHint={t("accessibility.button.editHint")}
               accessibilityRole="button"
             >
-              <Text style={styles.titleText}>{diary.title}</Text>
+              <Text
+                style={[
+                  styles.titleText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      diary.title,
+                      isChineseTitle ? "bold" : "semibold"
+                    ),
+                    fontWeight: isChineseTitle ? "700" : "600",
+                    fontSize: isChineseTitle ? 18 : 20,
+                    lineHeight: isChineseTitle ? 26 : 24,
+                  },
+                ]}
+              >
+                {diary.title}
+              </Text>
             </TouchableOpacity>
           )}
 
           {/* 内容 */}
           {isEditingContent ? (
             <TextInput
-              style={styles.editContentInput}
+              style={[
+                styles.editContentInput,
+                {
+                  fontFamily: getFontFamilyForText(
+                    editedContent || diary.polished_content || "",
+                    "regular"
+                  ),
+                },
+              ]}
               value={editedContent}
               onChangeText={setEditedContent}
               autoFocus
@@ -685,7 +826,21 @@ export default function DiaryDetailScreen({
               accessibilityHint={t("accessibility.button.editHint")}
               accessibilityRole="button"
             >
-              <Text style={styles.contentText}>{diary.polished_content}</Text>
+              <Text
+                style={[
+                  styles.contentText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      diary.polished_content,
+                      "regular"
+                    ),
+                    fontSize: isChineseContent ? 16 : 16, // ✅ 中文字号从 14 增加到 16
+                    lineHeight: isChineseContent ? 28 : 24, // ✅ 中文行高 28px
+                  },
+                ]}
+              >
+                {diary.polished_content}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -695,11 +850,33 @@ export default function DiaryDetailScreen({
           <View style={styles.feedbackCard}>
             <View style={styles.feedbackHeader}>
               <Ionicons name="sparkles" size={18} color="#E56C45" />
-              <Text style={styles.feedbackTitle}>
+              <Text
+                style={[
+                  styles.feedbackTitle,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("diary.aiFeedbackTitle"),
+                      "medium"
+                    ),
+                  },
+                ]}
+              >
                 {t("diary.aiFeedbackTitle")}
               </Text>
             </View>
-            <Text style={styles.feedbackText}>{diary.ai_feedback}</Text>
+            <Text
+              style={[
+                styles.feedbackText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    diary.ai_feedback,
+                    "regular"
+                  ),
+                },
+              ]}
+            >
+              {diary.ai_feedback}
+            </Text>
           </View>
         )}
       </>
@@ -818,7 +995,16 @@ export default function DiaryDetailScreen({
       {Platform.OS === "ios" && toastVisible && (
         <View style={styles.toastOverlay} pointerEvents="none">
           <View style={styles.toastContainer}>
-            <Text style={styles.toastText}>{toastMessage}</Text>
+            <Text
+              style={[
+                styles.toastText,
+                {
+                  fontFamily: getFontFamilyForText(toastMessage, "regular"),
+                },
+              ]}
+            >
+              {toastMessage}
+            </Text>
           </View>
         </View>
       )}
@@ -1181,6 +1367,9 @@ const FullScreenImageViewer: React.FC<FullScreenImageViewerProps> = ({
                   ? getImageAnimatedStyle()
                   : { opacity: opacityAnim };
 
+              // ✅ 提取 opacity，用于图片淡入淡出效果
+              const imageOpacity = animatedStyle?.opacity || opacityAnim;
+
               // ✅ 初始化手势动画值
               if (!scaleAnims.current[index]) {
                 scaleAnims.current[index] = new Animated.Value(1);
@@ -1188,15 +1377,16 @@ const FullScreenImageViewer: React.FC<FullScreenImageViewerProps> = ({
                 translateYAnims.current[index] = new Animated.Value(0);
               }
 
-              // ✅ 计算图片尺寸（等比例，宽度固定为屏幕宽度，高度根据比例计算但不超过屏幕高度）
+              // ✅ 计算图片尺寸（等比例，宽度固定为屏幕宽度，高度根据比例计算，不限制最大高度）
+              // 参考微信实现：图片按原比例显示，宽度最大为屏幕宽度，高度按比例计算
               const dimensions = imageDimensions[index];
               let imageWidth = windowWidth;
-              let imageHeight = windowHeight;
-              if (dimensions) {
+              let imageHeight = windowWidth; // ✅ 默认使用正方形（1:1），避免拉伸
+              if (dimensions && dimensions.width && dimensions.height) {
                 const aspectRatio = dimensions.height / dimensions.width;
-                const calculatedHeight = windowWidth * aspectRatio;
-                // ✅ 如果计算出的高度超过屏幕高度，则限制为屏幕高度（图片会在容器内居中显示）
-                imageHeight = Math.min(calculatedHeight, windowHeight);
+                // ✅ 宽度固定为屏幕宽度，高度按比例计算，不限制最大高度
+                // 如果高度超过屏幕，允许在容器内滚动查看
+                imageHeight = windowWidth * aspectRatio;
               }
 
               // ✅ 创建手势
@@ -1327,50 +1517,67 @@ const FullScreenImageViewer: React.FC<FullScreenImageViewerProps> = ({
                     { width: windowWidth },
                   ]}
                 >
-                  <GestureDetector gesture={finalGesture}>
-                    <Animated.View
-                      style={[
-                        fullScreenStyles.imageWrapper,
-                        {
-                          transform: [
-                            { scale: scaleAnims.current[index] },
-                            { translateX: translateXAnims.current[index] },
-                            { translateY: translateYAnims.current[index] },
-                          ],
-                        },
-                      ]}
-                    >
-                      <Animated.Image
-                        source={{ uri: item }}
+                  {/* ✅ 使用 ScrollView 包裹，支持垂直滚动查看完整图片 */}
+                  <ScrollView
+                    contentContainerStyle={fullScreenStyles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    bounces={false}
+                    scrollEnabled={(zoomScale[index] || 1) <= 1} // ✅ 只有在未缩放时才允许滚动
+                    nestedScrollEnabled={true} // ✅ 允许嵌套滚动
+                  >
+                    <GestureDetector gesture={finalGesture}>
+                      <Animated.View
                         style={[
-                          fullScreenStyles.image,
-                          // ✅ 等比例显示：宽度固定为屏幕宽度，高度根据图片比例自动计算
-                          // 如果高度超过屏幕，则限制为屏幕高度，图片会在容器内居中显示
+                          fullScreenStyles.imageWrapper,
                           {
-                            width: imageWidth,
-                            height: imageHeight,
+                            transform: [
+                              { scale: scaleAnims.current[index] },
+                              { translateX: translateXAnims.current[index] },
+                              { translateY: translateYAnims.current[index] },
+                            ],
                           },
-                          animatedStyle,
                         ]}
-                        resizeMode="contain" // ✅ 使用 contain，确保图片完整显示，不裁切，在容器内居中
-                        onLoad={(event) => {
-                          // ✅ 获取图片实际尺寸，用于计算等比高度
-                          const { width, height } = event.nativeEvent.source;
-                          if (width && height) {
-                            console.log(
-                              `📐 图片 ${index} 实际尺寸: ${width}x${height}, 宽高比: ${(
-                                height / width
-                              ).toFixed(2)}`
-                            );
-                            setImageDimensions((prev) => ({
-                              ...prev,
-                              [index]: { width, height },
-                            }));
-                          }
-                        }}
-                      />
-                    </Animated.View>
-                  </GestureDetector>
+                      >
+                        <Animated.Image
+                          source={{ uri: item }}
+                          style={[
+                            fullScreenStyles.image,
+                            // ✅ 等比例显示：宽度固定为屏幕宽度，高度根据图片比例自动计算
+                            // 使用 aspectRatio 确保图片按原比例显示，不会被拉伸
+                            dimensions && dimensions.width && dimensions.height
+                              ? {
+                                  width: imageWidth,
+                                  aspectRatio:
+                                    dimensions.width / dimensions.height, // ✅ 使用 aspectRatio 保持原比例
+                                }
+                              : {
+                                  // ✅ 图片未加载完成时，使用默认尺寸（正方形）
+                                  width: imageWidth,
+                                  height: imageWidth,
+                                },
+                            // ✅ 只应用 opacity 动画，不应用 scale（scale 由手势控制）
+                            { opacity: imageOpacity },
+                          ]}
+                          resizeMode="contain" // ✅ 使用 contain，确保图片完整显示，不裁切
+                          onLoad={(event) => {
+                            // ✅ 获取图片实际尺寸，用于计算等比高度
+                            const { width, height } = event.nativeEvent.source;
+                            if (width && height) {
+                              console.log(
+                                `📐 图片 ${index} 实际尺寸: ${width}x${height}, 宽高比: ${(
+                                  height / width
+                                ).toFixed(2)}`
+                              );
+                              setImageDimensions((prev) => ({
+                                ...prev,
+                                [index]: { width, height },
+                              }));
+                            }
+                          }}
+                        />
+                      </Animated.View>
+                    </GestureDetector>
+                  </ScrollView>
                 </View>
               );
             }}
@@ -1383,7 +1590,17 @@ const FullScreenImageViewer: React.FC<FullScreenImageViewerProps> = ({
             >
               <SafeAreaView style={fullScreenStyles.footer} edges={["bottom"]}>
                 <View style={fullScreenStyles.indicatorContainer}>
-                  <Text style={fullScreenStyles.indicatorText}>
+                  <Text
+                    style={[
+                      fullScreenStyles.indicatorText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          `${currentIndex + 1} / ${imageUrls.length}`,
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
                     {currentIndex + 1} / {imageUrls.length}
                   </Text>
                 </View>
@@ -1431,13 +1648,21 @@ const fullScreenStyles = StyleSheet.create({
     justifyContent: "center", // ✅ 垂直居中
     alignItems: "center", // ✅ 水平居中
   },
+  scrollContent: {
+    // ✅ ScrollView 内容容器样式：确保图片在容器内居中显示
+    // 参考微信实现：图片按原比例显示，在容器内居中
+    flexGrow: 1,
+    justifyContent: "center", // 垂直居中（当图片高度小于屏幕时）
+    alignItems: "center", // 水平居中
+    minHeight: Dimensions.get("window").height, // 最小高度为屏幕高度，确保可以滚动查看完整图片
+  },
   imageWrapper: {
     justifyContent: "center", // ✅ 垂直居中
     alignItems: "center", // ✅ 水平居中
   },
   image: {
     // ✅ 尺寸在 renderItem 中根据图片比例动态计算
-    // 宽度固定为屏幕宽度，高度根据图片宽高比自动计算
+    // 宽度固定为屏幕宽度，高度根据图片宽高比自动计算，不限制最大高度
   },
   footerWrapper: {
     position: "absolute",
@@ -1591,7 +1816,7 @@ const styles = StyleSheet.create({
   // ===== 音频区域 =====
   audioSection: {
     marginHorizontal: 20,
-    marginTop: 16, // ✅ 增加顶部间距
+    marginTop: 8, // ✅ 减少顶部间距，让图片和音频更紧凑
     marginBottom: 12, // 减少底部间距，让音频和内容卡片更近
   },
 
@@ -1817,33 +2042,36 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 
-  // ===== 图片缩略图容器（图片+文字日记）- 一行3个 =====
+  // ===== 图片缩略图容器（图片+文字日记）- 动态列数 + 横向滚动 =====
   imageThumbnailContainer: {
-    marginHorizontal: 20, // 左右各20px，总共40px
-    marginTop: 16,
-    marginBottom: 12,
+    marginTop: 20,
+    marginBottom: 12, // ✅ 减少底部间距，让图片和音频更紧凑
+    // marginHorizontal: 20, // 移除 marginHorizontal，改用 contentContainerStyle padding
   },
-  imageThumbnailGrid: {
+  imageThumbnailScrollContent: {
+    paddingHorizontal: 20, // 在 ScrollView 内容容器上添加 padding
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "flex-start",
+    // flexWrap: "wrap", // 移除 wrap，允许横向滚动
   },
   imageThumbnailWrapper: {
-    marginRight: 8, // 图片之间的间距
-    marginBottom: 8, // 行之间的间距
-    borderRadius: 8,
+    // 尺寸和边距在行内样式中动态计算
     overflow: "hidden",
-    backgroundColor: "#F5F5F5",
-    // 动态计算宽度：(屏幕宽度 - 左右margin 40px - 间距 8*2) / 3
-    width: Math.floor((Dimensions.get("window").width - 40 - 16) / 3),
-    height: Math.floor((Dimensions.get("window").width - 40 - 16) / 3),
-  },
-  imageThumbnailLastInRow: {
-    marginRight: 0, // 每行最后一个没有右边距
-  },
-  imageThumbnail: {
-    width: "100%",
-    height: "100%",
     borderRadius: 8,
+  },
+  // imageThumbnailLastInRow: { // 不再需要，动态计算
+  //   marginRight: 0,
+  // },
+  imageThumbnail: {
+    // 尺寸在行内样式中动态计算
+  },
+  moreBadge: {
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  moreText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

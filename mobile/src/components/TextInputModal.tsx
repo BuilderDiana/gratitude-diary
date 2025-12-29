@@ -31,8 +31,8 @@ import {
 
 import { createTextDiary, updateDiary } from "../services/diaryService";
 import { t } from "../i18n";
-import { Typography } from "../styles/typography";
-import ProcessingAnimation from "./ProcessingAnimation";
+import { Typography, getFontFamilyForText } from "../styles/typography";
+import ProcessingModal from "./ProcessingModal";
 import DiaryResultView from "./DiaryResultView";
 
 const { width, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -156,7 +156,12 @@ export default function TextInputModal({
     .onEnd((event) => {
       if (event.translationY > 100) {
         // 向下拖动超过100px，关闭Modal
-        onCancel();
+        // ✅ 如果结果页，需要确认；否则直接关闭
+        if (showResult) {
+          handleCancel();
+        } else {
+          onCancel();
+        }
         dragY.setValue(0);
       } else {
         // 弹回原位
@@ -362,14 +367,30 @@ export default function TextInputModal({
         console.log("✅ 后端更新成功");
       }
 
+      // ✅ 先重置所有状态，确保不会触发任何副作用
+      setShowResult(false);
+      setIsEditing(false);
+      setHasChanges(false);
+      setContent("");
+      setPolishedContent("");
+      setTitle("");
+      setAiFeedback("");
+      setCurrentDiaryId(null);
+      setIsProcessing(false);
+      setProcessingStep(0);
+      setProcessingProgress(0);
+
       // 显示 Toast
       showToast(t("success.diaryCreated"));
 
-      // 短暂延迟后关闭
+      // ✅ 短暂延迟让用户看到 Toast
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // 通知父组件刷新列表
-      onSuccess();
+      // ✅ 通知父组件刷新列表（父组件会在 onSuccess 中关闭 modal）
+      // 使用 setTimeout 确保状态更新已完成
+      setTimeout(() => {
+        onSuccess();
+      }, 0);
     } catch (error: any) {
       console.error("❌ 保存失败:", error);
       Alert.alert(
@@ -398,6 +419,63 @@ export default function TextInputModal({
 
   // ========== 渲染函数 ==========
 
+  // ✅ 处理取消/关闭操作（带确认对话框）
+  const handleCancel = () => {
+    // ✅ 如果结果已生成但用户未保存，弹出确认对话框
+    if (showResult && currentDiaryId) {
+      Alert.alert(
+        t("confirm.discardUnsavedTitle"),
+        t("confirm.discardUnsavedMessage"),
+        [
+          {
+            text: t("common.cancel"),
+            style: "cancel",
+          },
+          {
+            text: t("common.confirm"),
+            style: "destructive",
+            onPress: async () => {
+              try {
+                console.log("🗑️ 用户确认放弃，删除未保存日记:", currentDiaryId);
+                const { deleteDiary } = await import("../services/diaryService");
+                await deleteDiary(currentDiaryId);
+              } catch (deleteError) {
+                console.log("⚠️ 删除未保存日记失败（可忽略）:", deleteError);
+              } finally {
+                // 重置状态并关闭
+                setCurrentDiaryId(null);
+                setShowResult(false);
+                setIsProcessing(false);
+                setContent("");
+                setPolishedContent("");
+                setTitle("");
+                setAiFeedback("");
+                setIsEditing(false);
+                setHasChanges(false);
+                setEditedContent("");
+                onCancel();
+              }
+            },
+          },
+        ]
+      );
+      return; // 等待用户确认
+    }
+
+    // ✅ 如果没有结果或已保存，直接取消
+    setCurrentDiaryId(null);
+    setShowResult(false);
+    setIsProcessing(false);
+    setContent("");
+    setPolishedContent("");
+    setTitle("");
+    setAiFeedback("");
+    setIsEditing(false);
+    setHasChanges(false);
+    setEditedContent("");
+    onCancel();
+  };
+
   // 渲染结果页 Header
   const renderResultHeader = () => {
     const isEditingState = isEditing;
@@ -405,11 +483,21 @@ export default function TextInputModal({
     return (
       <View style={styles.resultHeader}>
         <TouchableOpacity
-          onPress={isEditingState ? cancelEditing : onCancel}
+          onPress={isEditingState ? cancelEditing : handleCancel}
           style={styles.resultHeaderButton}
         >
           {isEditingState ? (
-            <Text style={styles.resultHeaderButtonText}>
+            <Text
+              style={[
+                styles.resultHeaderButtonText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("common.cancel"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("common.cancel")}
             </Text>
           ) : (
@@ -417,7 +505,17 @@ export default function TextInputModal({
           )}
         </TouchableOpacity>
 
-        <Text style={styles.resultHeaderTitle}>
+        <Text
+          style={[
+            styles.resultHeaderTitle,
+            {
+              fontFamily: getFontFamilyForText(
+                isEditingState ? t("common.edit") : t("diary.yourEntry"),
+                "regular"
+              ),
+            },
+          ]}
+        >
           {isEditingState ? t("common.edit") : t("diary.yourEntry")}
         </Text>
 
@@ -430,6 +528,12 @@ export default function TextInputModal({
               style={[
                 styles.resultHeaderButtonText,
                 styles.resultHeaderSaveText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("common.done"),
+                    "semibold"
+                  ),
+                },
               ]}
             >
               {t("common.done")}
@@ -457,7 +561,19 @@ export default function TextInputModal({
           >
             <Ionicons name="close-outline" size={24} color="#666" />
           </TouchableOpacity>
-          <Text style={styles.title}>{t("createTextDiary.title")}</Text>
+          <Text
+            style={[
+              styles.title,
+              {
+                fontFamily: getFontFamilyForText(
+                  t("createTextDiary.title"),
+                  "medium"
+                ),
+              },
+            ]}
+          >
+            {t("createTextDiary.title")}
+          </Text>
           <View style={styles.headerRight} />
         </View>
 
@@ -472,13 +588,28 @@ export default function TextInputModal({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.promptText}>
+            <Text
+              style={[
+                styles.promptText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("createTextDiary.promptTitle"),
+                    "medium"
+                  ),
+                },
+              ]}
+            >
               {t("createTextDiary.promptTitle")}
             </Text>
 
             <View style={styles.inputContainer}>
               <TextInput
-                style={styles.textInput}
+                style={[
+                  styles.textInput,
+                  {
+                    fontFamily: getFontFamilyForText(content, "regular"),
+                  },
+                ]}
                 placeholder={t("createTextDiary.textPlaceholder")}
                 placeholderTextColor="#999"
                 value={content}
@@ -508,7 +639,19 @@ export default function TextInputModal({
               accessibilityHint={t("accessibility.button.continueHint")}
               accessibilityRole="button"
             >
-              <Text style={styles.completeButtonText}>{t("common.done")}</Text>
+              <Text
+                style={[
+                  styles.completeButtonText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.done"),
+                      "semibold"
+                    ),
+                  },
+                ]}
+              >
+                {t("common.done")}
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -524,25 +667,22 @@ export default function TextInputModal({
       <>
         {renderResultHeader()}
 
-        {/* ✅ 加载状态：使用 flex: 1 占满固定高度 */}
-        {/* ✅ 结果状态：使用 flexGrow 让内容自适应高度 */}
+        {/* ✅ 可滚动内容 - 包裹键盘避让（与 RecordingModal 保持一致） */}
         <KeyboardAvoidingView
-          style={isProcessing ? { flex: 1 } : { flexGrow: 1 }}
+          style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
         >
           <ScrollView
-            style={isProcessing ? styles.resultScrollView : styles.resultScrollViewFlexible}
+            style={styles.resultScrollView}
             contentContainerStyle={styles.resultScrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
           >
             {isProcessing ? (
-              <ProcessingAnimation
-                processingStep={processingStep}
-                processingProgress={processingProgress}
-                steps={processingSteps}
-              />
+              // ✅ 占位，实际显示在Modal中
+              <View style={{ flex: 1 }} />
             ) : (
               <>
                 <DiaryResultView
@@ -563,18 +703,30 @@ export default function TextInputModal({
           </ScrollView>
         </KeyboardAvoidingView>
 
-        {!isProcessing && (
-          <View style={styles.resultBottomBar}>
-            <TouchableOpacity
-              style={styles.saveButton}
-              onPress={handleSaveAndClose}
-            >
-              <Text style={styles.saveButtonText}>
+        {/* 底部保存按钮（与 RecordingModal 保持一致） */}
+        <View style={styles.resultBottomBar}>
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={handleSaveAndClose}
+            accessibilityLabel={t("diary.saveToJournal")}
+            accessibilityHint={t("accessibility.button.saveHint")}
+            accessibilityRole="button"
+          >
+              <Text
+                style={[
+                  styles.saveButtonText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("diary.saveToJournal"),
+                      "semibold"
+                    ),
+                  },
+                ]}
+              >
                 {t("diary.saveToJournal")}
               </Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          </TouchableOpacity>
+        </View>
       </>
     );
   };
@@ -585,13 +737,13 @@ export default function TextInputModal({
         visible={visible}
         transparent
         animationType="none"
-        onRequestClose={onCancel}
+        onRequestClose={handleCancel}
       >
         <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={showResult ? undefined : onCancel}
+            onPress={showResult ? undefined : handleCancel}
           />
 
           <GestureDetector gesture={panGesture}>
@@ -615,13 +767,38 @@ export default function TextInputModal({
               {toastVisible && (
                 <View style={styles.toastOverlay} pointerEvents="none">
                   <View style={styles.toastContainer}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
+                    <Text
+                      style={[
+                        styles.toastText,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            toastMessage,
+                            "regular"
+                          ),
+                        },
+                      ]}
+                    >
+                      {toastMessage}
+                    </Text>
                   </View>
                 </View>
               )}
             </Animated.View>
           </GestureDetector>
         </Animated.View>
+
+        {/* ✅ 统一的处理加载Modal（覆盖整个屏幕） */}
+        {isProcessing && (
+          <ProcessingModal
+            visible={isProcessing}
+            processingStep={processingStep}
+            processingProgress={processingProgress}
+            steps={processingSteps.map((step) => ({
+              icon: step.icon,
+              text: step.text,
+            }))}
+          />
+        )}
       </Modal>
     </GestureHandlerRootView>
   );
@@ -650,11 +827,11 @@ const styles = StyleSheet.create({
     minHeight: 640,
     maxHeight: 640,
   },
-  // ✅ 结果状态：根据内容动态调整（最小高度640，最大不超过屏幕高度）
+  // ✅ 结果状态：使用最大高度（与 RecordingModal 保持一致，确保内容多时AI回复不被挡住）
   modalResult: {
-    minHeight: 640,
+    height: SCREEN_HEIGHT - 80,
     maxHeight: SCREEN_HEIGHT - 80,
-    // 不设置固定 height，让内容决定高度
+    minHeight: 640,
   },
   header: {
     flexDirection: "row",
@@ -757,12 +934,7 @@ const styles = StyleSheet.create({
     color: "#E56C45",
   },
   resultScrollView: {
-    flex: 1, // ✅ 加载状态时使用（固定高度）
-  },
-  // ✅ 结果状态：使用 flexGrow 让内容自适应，而不是固定 flex: 1
-  resultScrollViewFlexible: {
-    flexGrow: 1,
-    flexShrink: 1,
+    flex: 1, // ✅ 与 RecordingModal 保持一致
   },
   resultScrollContent: {
     paddingHorizontal: 20,
@@ -817,9 +989,8 @@ const styles = StyleSheet.create({
     maxWidth: "80%",
   },
   toastText: {
+    ...Typography.caption,
     color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
   },
 });
 

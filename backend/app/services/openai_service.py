@@ -407,9 +407,22 @@ class OpenAIService:
             print(f"   - 任务1: GPT-4o-mini 润色 + 标题（字段 haiku）")
             print(f"   - 任务2: GPT-4o-mini 暖心反馈（字段 sonnet，基于原始文本）")
             
+            # 🔥 性能优化：预先下载并编码所有图片，避免在并行任务中重复下载
+            encoded_images = []
+            if image_urls and len(image_urls) > 0:
+                print(f"🖼️ 预处理 {len(image_urls)} 张图片...")
+                # 并行下载图片
+                download_tasks = [self._download_and_encode_image(url) for url in image_urls]
+                results = await asyncio.gather(*download_tasks, return_exceptions=True)
+                for i, img_data in enumerate(results):
+                    if isinstance(img_data, Exception):
+                        print(f"⚠️ 图片下载失败 ({image_urls[i]}): {img_data}")
+                    else:
+                        encoded_images.append(img_data)
+            
             # 创建两个异步任务
-            polish_task = self._call_gpt4o_mini_for_polish_and_title(text, detected_lang, image_urls)
-            feedback_task = self._call_gpt4o_mini_for_feedback(text, detected_lang, user_name, image_urls)
+            polish_task = self._call_gpt4o_mini_for_polish_and_title(text, detected_lang, encoded_images)
+            feedback_task = self._call_gpt4o_mini_for_feedback(text, detected_lang, user_name, encoded_images)
             
             # 并行执行并等待结果
             polish_result, feedback = await asyncio.gather(
@@ -461,7 +474,7 @@ class OpenAIService:
         self, 
         text: str,
         language: str,
-        image_urls: Optional[List[str]] = None
+        encoded_images: Optional[List[str]] = None
     ) -> Dict[str, str]:
         """
         调用 GPT-4o-mini 进行润色和生成标题
@@ -484,57 +497,78 @@ class OpenAIService:
         try:
             print(f"🎨 GPT-4o-mini: 开始润色和生成标题...")
             
+            # ✅ 根据传入的 language 参数构建 prompt
+            # 如果 language 是 Chinese，强制使用中文；如果是 English，强制使用英文
+            # 如果内容中有其他语言（如日文），保持原样但不影响标题语言
+            language_instruction = ""
+            if language == "Chinese":
+                language_instruction = """Language: CRITICAL - You MUST respond in Chinese (简体中文). 
+- Title MUST be in Chinese, even if the content contains other languages (Japanese, Korean, etc.)
+- Polished content should preserve the original language of each part, but the title MUST be Chinese
+- Example: If content is "オレンジの魅力 Talking about orange...", title should be "橙子的魅力" (Chinese), not "オレンジの魅力" (Japanese)"""
+            elif language == "English":
+                language_instruction = """Language: CRITICAL - You MUST respond in English. 
+- Title MUST be in English, even if the content contains other languages (Japanese, Korean, Chinese, etc.)
+- Polished content should preserve the original language of each part, but the title MUST be English
+- Example: If content is "オレンジの魅力 Talking about orange...", title should be "The Charm of Oranges" (English), not "オレンジの魅力" (Japanese)"""
+            else:
+                # 默认：检测语言，但优先中文或英文
+                language_instruction = """Language: Detect the user's primary language. 
+- If content is primarily Chinese, respond in Chinese
+- If content is primarily English, respond in English
+- If content contains mixed languages, use the language that appears most frequently
+- NEVER use Japanese or Korean for titles unless the ENTIRE content is in that language"""
+            
             # 构建 prompt
-            system_prompt = """You are a gentle diary editor. Your task is to polish the user's diary entry and create a title.
+            system_prompt = f"""You are a gentle diary editor. Your task is to polish the user's diary entry and create a title.
 
-Language: IMPORTANT - Detect the user's language and respond in THE SAME LANGUAGE. If user writes in Japanese, respond in Japanese. If user writes in Korean, respond in Korean. If user writes in Chinese, respond in Chinese. NEVER translate to a different language.
+{language_instruction}
 
 Your responsibilities:
 1. Fix obvious grammar/typos
 2. Make the text flow naturally
 3. Keep it ≤115% of original length
 4. **CRITICAL: Preserve ALL original content. Do NOT delete or omit any part of the user's entry.**
-5. Create a short, warm, poetic, meaningful title IN THE SAME LANGUAGE as the user's input
+5. Create a short, warm, poetic, meaningful title in the specified language (Chinese or English only)
 
 Style: Natural, warm, authentic. Don't over-edit.
 
 Response format (JSON only):
-{
-  "title": "Concise words in USER'S LANGUAGE",
-  "polished_content": "fixed text, SAME LANGUAGE as user - MUST include all original content"
-}
+{{
+  "title": "Concise words in the specified language (Chinese or English only)",
+  "polished_content": "fixed text, preserving original language of each part - MUST include all original content"
+}}
 
-Example (Chinese input):
+Example (Chinese language, mixed content with Japanese):
+Input: "オレンジの魅力 Talking about the orange, I mean, orange is kind of one of my favorite fruits."
+Output: {{"title": "橙子的魅力", "polished_content": "オレンジの魅力 Talking about the orange, I mean, orange is kind of one of my favorite fruits."}}
+
+Example (English language, mixed content with Japanese):
+Input: "オレンジの魅力 Talking about the orange, I mean, orange is kind of one of my favorite fruits."
+Output: {{"title": "The Charm of Oranges", "polished_content": "オレンジの魅力 Talking about the orange, I mean, orange is kind of one of my favorite fruits."}}
+
+Example (Chinese language, pure Chinese):
 Input: "今天天气很好我去了公园看到了很多花"
-Output: {"title": "公园里的花", "polished_content": "今天天气很好，我去了公园，看到了很多花。"}
+Output: {{"title": "公园里的花", "polished_content": "今天天气很好，我去了公园，看到了很多花。"}}
 
-Example (Japanese input):
-Input: "今日は天気がよかった公園に行った"
-Output: {"title": "公園での一日", "polished_content": "今日は天気がよかった。公園に行った。"}
-
-Example (English input):
+Example (English language, pure English):
 Input: "today was good i went to park"
-Output: {"title": "A Day at the Park", "polished_content": "Today was good. I went to the park."}"""
+Output: {{"title": "A Day at the Park", "polished_content": "Today was good. I went to the park."}}"""
 
             # 构建用户消息内容
             user_content = []
             
             # 如果有图片，添加图片到消息中（使用vision能力）
-            if image_urls and len(image_urls) > 0:
-                print(f"🖼️ 添加 {len(image_urls)} 张图片到 Vision 请求...")
-                for image_url in image_urls:
-                    # 下载图片并转换为base64
-                    try:
-                        image_data = await self._download_and_encode_image(image_url)
-                        user_content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_data}"
-                            }
-                        })
-                    except Exception as e:
-                        print(f"⚠️ 下载图片失败 {image_url}: {e}")
-                        # 如果图片下载失败，继续处理，只使用文字
+            if encoded_images and len(encoded_images) > 0:
+                print(f"🖼️ 添加 {len(encoded_images)} 张图片到 Vision 请求 (Low-res 模式)...")
+                for image_data in encoded_images:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_data}",
+                            "detail": "low"  # ✅ 使用低分辨率模式，处理更快且更省钱
+                        }
+                    })
                 
                 # 添加文字内容
                 user_content.append({
@@ -550,7 +584,7 @@ Output: {"title": "A Day at the Park", "polished_content": "Today was good. I we
             # 原始文本长度 + 标题 + JSON 格式开销 + 安全边距
             original_length = len(text)
             # 如果有图片，需要额外的tokens（每张图片约85 tokens）
-            image_tokens = len(image_urls) * 85 if image_urls else 0
+            image_tokens = len(encoded_images) * 85 if encoded_images else 0
             # 估算：原始文本 * 1.15（115%限制） + 标题（50字符） + JSON格式（100字符） + 安全边距（500字符）
             estimated_output_length = int(original_length * 1.15) + 50 + 100 + 500
             # max_tokens 大约是字符数的 0.75（中文）到 1.5（英文），取中间值 1.0
@@ -561,12 +595,12 @@ Output: {"title": "A Day at the Park", "polished_content": "Today was good. I we
             print(f"📤 GPT-4o-mini: 发送请求到 OpenAI...")
             print(f"   模型: {self.MODEL_CONFIG['haiku']}")
             print(f"   原始文本长度: {original_length} 字符")
-            print(f"   图片数量: {len(image_urls) if image_urls else 0}")
+            print(f"   图片数量: {len(encoded_images) if encoded_images else 0}")
             print(f"   估算输出长度: {estimated_output_length} 字符")
             print(f"   设置 max_tokens: {max_tokens}")
             
             # 构建消息
-            if image_urls and len(image_urls) > 0:
+            if encoded_images and len(encoded_images) > 0:
                 # 使用vision格式（包含图片）
                 messages = [
                     {"role": "system", "content": system_prompt},
@@ -681,7 +715,7 @@ Output: {"title": "A Day at the Park", "polished_content": "Today was good. I we
         text: str,
         language: str,
         user_name: Optional[str] = None,
-        image_urls: Optional[List[str]] = None
+        encoded_images: Optional[List[str]] = None
     ) -> str:
         """
         调用 GPT-4o-mini 生成温暖的 AI 反馈
@@ -719,92 +753,48 @@ Output: {"title": "A Day at the Park", "polished_content": "Today was good. I we
                 else:
                     name_greeting = f", {first_name}"
             
-            # 构建 prompt
-            if user_name and user_name.strip():
-                # 有用户名字时，明确规定必须使用名字
-                system_prompt = f"""You are a warm, empathetic listener responding to {user_name}'s diary entry.
+            # 构建统一的系统提示词 (支持自动语言检测)
+            system_prompt = f"""You are a warm, empathetic listener responding to a diary entry.
 
-Language: IMPORTANT - Detect the user's language from their diary entry and respond in THE SAME LANGUAGE. If they write in Japanese, respond in Japanese. If Korean, respond in Korean. Match their language exactly. NEVER translate.
+LANGUAGE RULES:
+1. **Detect and Follow**: Detect the user's language from their input (text or voice transcription) and respond in THE SAME LANGUAGE (e.g., if they write in Chinese, respond in Chinese; if Japanese, respond in Japanese).
+2. **Fallback**: If the user's input is empty or only contains images, respond in {language}.
+3. **Consistency**: NEVER translate. Match the emotional tone and language exactly.
 
-⚠️ CRITICAL RULE - YOU MUST FOLLOW THIS:
-Your response MUST start with "{user_name}" (followed by a comma in English or a Chinese comma in Chinese), then your message. 
-DO NOT use generic greetings like "Hi there", "Hello", or "Hi". 
-DO NOT skip the name. 
-ALWAYS start with "{user_name}".
-
-Your style:
-- Warm and genuine (like a close friend)
-- **Keep it SHORT and POWERFUL** - never longer than the user's input (unless their input is very short, <20 chars)
-- Maximum length: {max_feedback_length} characters (Chinese) or {max_feedback_length // 2} words (English)
-- 1-2 complete sentences (prefer 1 sentence if user's input is short)
-- **FIRST WORD MUST BE "{user_name}"** - No exceptions
-- Acknowledge their feelings with warmth
-- Offer gentle encouragement when appropriate
-- Natural, conversational, intimate tone
-
-Response format: Plain text only (NO JSON, NO quotes, NO markdown)
-
-Example responses (MUST follow this exact format):
-- Chinese (short input): "{user_name}，这份简单的快乐很珍贵。"
-- Chinese (longer input): "{user_name}，这份记录很温暖。生活中的小确幸，往往是最治愈的时刻。"
-- English (short input): "{user_name}, this simple joy is precious."
-- English (longer input): "{user_name}, this moment you captured is beautiful. Small joys like this are what make life meaningful."
-
-REMEMBER: 
-1. Your response MUST start with "{user_name}" (with comma or Chinese comma)
-2. DO NOT use "Hi there", "Hello", "Hi", or any other greeting
-3. DO NOT skip the name
-4. Be warm, be brief, be personal. Quality over quantity."""
-            else:
-                # 没有用户名字时，使用通用提示
-                system_prompt = f"""You are a warm, empathetic listener responding to someone's diary entry.
-
-Language: IMPORTANT - Detect the user's language from their diary entry and respond in THE SAME LANGUAGE. If they write in Japanese, respond in Japanese. If Korean, respond in Korean. Match their language exactly. NEVER translate.
+⚠️ CRITICAL RULES - YOU MUST FOLLOW:
+1. **NEVER ask questions**: Do not ask "How are you?" or "What's on your mind?". No question marks allowed.
+2. **Warm Listener**: Your role is to listen and provide emotional resonance, NOT to start a conversation.
+3. **Short and Powerful**: 1-2 sentences maximum. Keep it concise.
+4. **Greeting**: {"Your response MUST start with '" + user_name + (", " if language == "English" else "，") + "'." if user_name else "Start your response directly."}
 
 Your style:
-- Warm and genuine (like a close friend)
-- **Keep it SHORT and POWERFUL** - never longer than the user's input (unless their input is very short, <20 chars)
-- Maximum length: {max_feedback_length} characters (Chinese) or {max_feedback_length // 2} words (English)
-- 1-2 complete sentences (prefer 1 sentence if user's input is short)
-- Acknowledge their feelings with warmth
-- Offer gentle encouragement when appropriate
-- Natural, conversational, intimate tone
+- Like a close friend, genuine and empathetic.
+- Acknowledge their feelings with warmth.
+- Natural, conversational, intimate tone.
 
-Response format: Plain text only (NO JSON, NO quotes, NO markdown)
-
-Example responses (short and warm):
-- Chinese (short input): "这份简单的快乐很珍贵。"
-- Chinese (longer input): "这份记录很温暖。生活中的小确幸，往往是最治愈的时刻。"
-- English (short input): "This simple joy is precious."
-- English (longer input): "This moment you captured is beautiful. Small joys like this are what make life meaningful."
-
-Remember: Be warm, be brief, be personal. Quality over quantity."""
+Response format: Plain text only (NO JSON, NO quotes, NO markdown)."""
 
             # 构建个性化的用户提示
             user_content = []
             
             # 如果有图片，添加图片到消息中（使用vision能力）
-            if image_urls and len(image_urls) > 0:
-                print(f"🖼️ 添加 {len(image_urls)} 张图片到 Vision 反馈请求...")
-                for image_url in image_urls:
-                    # 下载图片并转换为base64
-                    try:
-                        image_data = await self._download_and_encode_image(image_url)
-                        user_content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_data}"
-                            }
-                        })
-                    except Exception as e:
-                        print(f"⚠️ 下载图片失败 {image_url}: {e}")
-                        # 如果图片下载失败，继续处理，只使用文字
+            if encoded_images and len(encoded_images) > 0:
+                print(f"🖼️ 添加 {len(encoded_images)} 张图片到 Vision 反馈请求 (Low-res 模式)...")
+                for image_data in encoded_images:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_data}",
+                            "detail": "low"
+                        }
+                    })
                 
                 # 添加文字内容
-                if user_name:
-                    text_content = f"{user_name} just shared this with you (including images):\n\n{text}\n\nRespond warmly and personally, considering both the images and the text:"
+                # 添加文字内容 (使用中性指令，避免语言诱导)
+                if text.strip():
+                    text_content = f"The user shared this (including images):\n\n{text}\n\nRespond with warmth and empathy in the SAME LANGUAGE as the user's input (NEVER ask questions):"
                 else:
-                    text_content = f"Someone just shared this with you (including images):\n\n{text}\n\nRespond with warmth and empathy, considering both the images and the text:"
+                    text_content = f"The user shared some images. Feel the atmosphere and respond with warmth and empathy in {language} (NEVER ask questions):"
                 
                 user_content.append({
                     "type": "text",
@@ -813,25 +803,22 @@ Remember: Be warm, be brief, be personal. Quality over quantity."""
                 user_prompt = user_content
             else:
                 # 只有文字，使用纯文本
-                if user_name:
-                    user_prompt = f"{user_name} just shared this with you:\n\n{text}\n\nRespond warmly and personally:"
-                else:
-                    user_prompt = f"Someone just shared this with you:\n\n{text}\n\nRespond with warmth and empathy:"
+                user_prompt = f"The user shared this:\n\n{text}\n\nRespond with warmth and empathy in the SAME LANGUAGE as the user's input (NEVER ask questions):"
             
             # 调用 OpenAI Chat Completions API
             # 动态调整 max_tokens：根据用户输入长度，预留昵称与提示空间
             estimated_output_length = max_feedback_length + 40
-            image_tokens = len(image_urls) * 85 if image_urls else 0
+            image_tokens = len(encoded_images) * 85 if encoded_images else 0
             max_tokens = max(200, min(int(estimated_output_length * 1.2) + image_tokens, 800))
 
             print(f"📤 GPT-4o-mini: 发送请求到 OpenAI...")
             print(f"   模型: {self.MODEL_CONFIG['sonnet']}")
             print(f"   用户名字: {user_name if user_name else '未提供'}")
-            print(f"   图片数量: {len(image_urls) if image_urls else 0}")
+            print(f"   图片数量: {len(encoded_images) if encoded_images else 0}")
             print(f"   System prompt 前100字符: {system_prompt[:100]}...")
 
             # 构建消息
-            if image_urls and len(image_urls) > 0:
+            if encoded_images and len(encoded_images) > 0:
                 # 使用vision格式（包含图片）
                 messages = [
                     {"role": "system", "content": system_prompt},

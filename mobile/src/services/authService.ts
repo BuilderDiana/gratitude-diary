@@ -670,6 +670,11 @@ export async function updateUserName(name: string): Promise<void> {
 
     const data = await response.json();
     console.log("✅ Cognito 用户姓名更新成功:", data);
+
+    // ✅ 更新本地存储的用户信息
+    const updatedUser = { ...currentUser, name: name };
+    await saveUser(updatedUser);
+    console.log("✅ 本地用户信息已更新:", name);
   } catch (error: any) {
     console.error("❌ 更新 Cognito 用户姓名失败:", error);
     throw error;

@@ -201,6 +201,7 @@ export default {
     confirmMessage: "用文字或语音记录这一刻的感受，让回忆更完整",
     saveAsIs: "直接保存",
     addContent: "添加内容",
+    textPreview: "已输入文字",
   },
 
   // 日记通用（创建后的结果页面）
@@ -237,6 +238,11 @@ export default {
       polish: "让文字更优美...",
       title: "为你提炼标题...",
       feedback: "写下我的回复...",
+      // ✅ 图片+文字场景专用步骤（不包含语音相关）
+      uploadImages: "上传图片...",
+      polishText: "让文字更优美...",
+      generateTitle: "为你提炼标题...",
+      generateFeedback: "写下我的回复...",
     },
   },
 
@@ -292,6 +298,8 @@ export default {
   confirm: {
     deleteTitle: "确认删除",
     deleteMessage: "您确定要删除这篇日记吗？删除后将无法恢复。",
+    discardUnsavedTitle: "放弃未保存的日记？",
+    discardUnsavedMessage: "此操作无法撤销。",
     cancelRecordingTitle: "取消录音",
     cancelRecordingMessage: "确定要取消吗？录音内容将丢失。",
     hint: "提示",
@@ -373,6 +381,7 @@ export default {
       supportHint: "双击发送邮件至 support@thankly.app",
       privacyHint: "双击打开隐私政策页面",
       deleteAccountHint: "双击永久删除账号",
+      viewDetailHint: "双击查看日记详情", // ✅ 新增
     },
     // 列表和导航
     list: {

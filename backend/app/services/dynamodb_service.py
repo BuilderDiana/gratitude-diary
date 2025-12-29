@@ -95,7 +95,7 @@ class DynamoDBService:
                 'ai_feedback': ai_feedback,
                 'audio_url':audio_url,
                 'audio_duration':audio_duration,
-                'image_urls': image_urls  # ← 添加这行
+                'image_urls': image_urls if image_urls else []  # ✅ 确保返回空列表而不是 None
             }
         except Exception as e:
             print(f"保存日记失败:{str(e)}")

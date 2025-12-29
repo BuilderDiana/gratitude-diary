@@ -12,7 +12,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Typography } from "../styles/typography";
+import { Typography, getFontFamilyForText } from "../styles/typography";
 import { t } from "../i18n";
 
 interface DiaryResultViewProps {
@@ -40,13 +40,27 @@ export default function DiaryResultView({
       <View style={styles.resultDiaryCard}>
         {/* 标题 */}
         {!!title && !isEditing && (
-          <Text style={styles.resultTitleText}>{title}</Text>
+          <Text
+            style={[
+              styles.resultTitleText,
+              {
+                fontFamily: getFontFamilyForText(title, "bold"),
+              },
+            ]}
+          >
+            {title}
+          </Text>
         )}
 
         {/* 内容 - 可点击编辑 */}
         {isEditing ? (
           <TextInput
-            style={styles.editContentInput}
+            style={[
+              styles.editContentInput,
+              {
+                fontFamily: getFontFamilyForText(editedContent, "regular"),
+              },
+            ]}
             value={editedContent}
             onChangeText={onContentChange}
             multiline
@@ -64,7 +78,16 @@ export default function DiaryResultView({
             accessibilityHint={t("accessibility.button.editHint")}
             accessibilityRole="button"
           >
-            <Text style={styles.resultContentText}>{polishedContent}</Text>
+            <Text
+              style={[
+                styles.resultContentText,
+                {
+                  fontFamily: getFontFamilyForText(polishedContent, "regular"),
+                },
+              ]}
+            >
+              {polishedContent}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -74,11 +97,28 @@ export default function DiaryResultView({
         <View style={styles.resultFeedbackCard}>
           <View style={styles.resultFeedbackHeader}>
             <Ionicons name="sparkles" size={18} color="#E56C45" />
-            <Text style={styles.resultFeedbackTitle}>
+            <Text
+              style={[
+                styles.resultFeedbackTitle,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("diary.aiFeedbackTitle"),
+                    "medium"
+                  ),
+                },
+              ]}
+            >
               {t("diary.aiFeedbackTitle")}
             </Text>
           </View>
-          <Text style={styles.resultFeedbackText}>{aiFeedback}</Text>
+          <Text
+            style={[
+              styles.resultFeedbackText,
+              { fontFamily: getFontFamilyForText(aiFeedback, "regular") },
+            ]}
+          >
+            {aiFeedback}
+          </Text>
         </View>
       )}
     </>
@@ -148,7 +188,8 @@ const styles = StyleSheet.create({
   resultFeedbackText: {
     ...Typography.body,
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 28, // ✅ 增大行高，让中文内容不那么密集（从22增加到28）
+    letterSpacing: 0.3, // ✅ 增加字间距，让阅读更舒适
     color: "#1A1A1A",
   },
 });
