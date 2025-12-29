@@ -67,8 +67,21 @@ export async function createTextDiary(
   data: CreateDiaryRequest
 ): Promise<Diary> {
   console.log("📝 创建文字日记");
+  
+  // ✅ 获取用户名字并传递到请求头（与语音日记和图片日记保持一致）
+  const { getCurrentUser } = await import("./authService");
+  const currentUser = await getCurrentUser();
+  const userName = currentUser?.name?.trim();
+  
+  const headers: Record<string, string> = {};
+  if (userName) {
+    headers["X-User-Name"] = userName;
+    console.log(`📤 通过请求头传递用户名字: ${userName}`);
+  }
+  
   const response = await apiService.post<Diary>("/diary/text", {
     body: data,
+    headers,
   });
   console.log("✅ 文字日记创建成功:", response.diary_id);
   return response;
@@ -85,19 +98,42 @@ export async function createTextDiary(
  * @param imageUris - Local image URIs (file:// paths from camera/gallery)
  * @returns Created diary entry
  */
+/**
+ * 创建图片日记（支持传入已上传的图片URL，用于并行优化）
+ * 
+ * @param imageUrlsOrUris - 图片URL列表（已上传）或本地URI列表（需要上传）
+ * @param content - 可选的文字内容
+ * @returns 创建的日记
+ */
 export async function createImageOnlyDiary(
-  imageUris: string[],
+  imageUrlsOrUris: string[],
   content?: string
 ): Promise<Diary> {
   console.log("📸 创建图片日记");
-  console.log("图片数量:", imageUris.length);
+  console.log("图片数量:", imageUrlsOrUris.length);
   console.log("是否有文字:", !!content);
 
   try {
-    // Step 1: Upload all images to S3
-    console.log("📤 Step 1: 上传图片到 S3...");
-    const imageUrls = await uploadDiaryImages(imageUris);
-    console.log("✅ 图片上传成功，URLs:", imageUrls);
+    // ✅ 判断是URL还是本地URI
+    // URL格式：https:// 或 http://
+    // 本地URI格式：file:// 或 content://
+    const isUrl = imageUrlsOrUris.length > 0 && (
+      imageUrlsOrUris[0].startsWith("http://") || 
+      imageUrlsOrUris[0].startsWith("https://")
+    );
+
+    let imageUrls: string[];
+    
+    if (isUrl) {
+      // ✅ 如果已经是URL，直接使用（用于并行优化场景）
+      console.log("📝 使用已上传的图片URL，直接创建日记...");
+      imageUrls = imageUrlsOrUris;
+    } else {
+      // ✅ 如果是本地URI，先上传
+      console.log("📤 Step 1: 上传图片到 S3...");
+      imageUrls = await uploadDiaryImages(imageUrlsOrUris);
+      console.log("✅ 图片上传成功，URLs:", imageUrls);
+    }
 
     // Step 2: Create diary with image URLs (and optional content)
     console.log("📝 Step 2: 创建日记记录...");
@@ -110,8 +146,20 @@ export async function createImageOnlyDiary(
       requestBody.content = content.trim();
     }
 
+    // ✅ 获取用户名字并传递到请求头（与文字日记和语音日记保持一致）
+    const { getCurrentUser } = await import("./authService");
+    const currentUser = await getCurrentUser();
+    const userName = currentUser?.name?.trim();
+
+    const headers: Record<string, string> = {};
+    if (userName) {
+      headers["X-User-Name"] = userName;
+      console.log(`📤 通过请求头传递用户名字: ${userName}`);
+    }
+
     const response = await apiService.post<Diary>("/diary/image-only", {
       body: requestBody,
+      headers,
     });
 
     console.log("✅ 图片日记创建成功:", response.diary_id);
@@ -293,28 +341,44 @@ export async function uploadDiaryImages(
       const presignedData = presignedUrls[i];
 
       console.log(`  📤 上传图片 ${i + 1}/${imageUris.length} 到 S3...`);
+      console.log(`  📎 图片URI: ${uri}`);
+      console.log(`  📎 预签名URL: ${presignedData.presigned_url}`);
 
-      // Read image file
-      const response = await fetch(uri);
-      const blob = await response.blob();
+      try {
+        // Read image file
+        const response = await fetch(uri);
+        if (!response.ok) {
+          throw new Error(
+            `读取图片文件失败: ${response.status} - ${response.statusText}`
+          );
+        }
+        const blob = await response.blob();
+        console.log(`  📎 图片大小: ${blob.size} bytes`);
 
-      // Upload to S3 using presigned URL
-      const uploadResponse = await fetch(presignedData.presigned_url, {
-        method: "PUT",
-        headers: {
-          "Content-Type": contentTypes[i],
-        },
-        body: blob,
-      });
+        // Upload to S3 using presigned URL
+        const uploadResponse = await fetch(presignedData.presigned_url, {
+          method: "PUT",
+          headers: {
+            "Content-Type": contentTypes[i],
+          },
+          body: blob,
+        });
 
-      if (!uploadResponse.ok) {
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text().catch(() => "");
+          throw new Error(
+            `上传图片 ${i + 1} 到 S3 失败: ${uploadResponse.status} - ${errorText || uploadResponse.statusText}`
+          );
+        }
+
+        finalUrls.push(presignedData.final_url);
+        console.log(`  ✅ 图片 ${i + 1} 上传成功: ${presignedData.final_url}`);
+      } catch (error: any) {
+        console.error(`  ❌ 图片 ${i + 1} 上传失败:`, error);
         throw new Error(
-          `上传图片 ${i + 1} 到 S3 失败: ${uploadResponse.status}`
+          `图片 ${i + 1} 上传失败: ${error.message || "未知错误"}`
         );
       }
-
-      finalUrls.push(presignedData.final_url);
-      console.log(`  ✅ 图片 ${i + 1} 上传成功: ${presignedData.final_url}`);
     }
 
     console.log("✅ 所有图片上传成功:", finalUrls);
@@ -467,6 +531,103 @@ export interface ProgressCallback {
 }
 
 /**
+ * 创建语音日记任务（仅创建任务，返回task_id，用于并行优化）
+ * 
+ * @param audioUri - 本地音频文件URI
+ * @param duration - 音频时长（秒）
+ * @param content - 可选的文字内容
+ * @returns Promise<string> - 任务ID
+ */
+export async function createVoiceDiaryTask(
+  audioUri: string,
+  duration: number,
+  content?: string
+): Promise<{ taskId: string; headers: Record<string, string> }> {
+  console.log("🎤 创建语音日记任务（用于并行优化）");
+
+  try {
+    // 第1步：创建FormData
+    const formData = new FormData();
+    formData.append("audio", {
+      uri: audioUri,
+      type: "audio/m4a",
+      name: "recording.m4a",
+    } as any);
+    formData.append("duration", duration.toString());
+
+    // ✅ 不传图片URL，后续补充
+    // ✅ 如果有文字内容，添加文字
+    if (content && content.trim()) {
+      formData.append("content", content.trim());
+    }
+
+    // 第2步：获取认证token
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      throw new Error("未登录");
+    }
+
+    // 获取用户名字
+    const { getCurrentUser } = await import("./authService");
+    const currentUser = await getCurrentUser();
+    const userName = currentUser?.name?.trim();
+
+    // 第3步：创建任务（发送到异步端点）
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    if (userName) {
+      headers["X-User-Name"] = userName;
+    }
+
+    const createResponse = await fetch(`${API_BASE_URL}/diary/voice/async`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    // 处理401错误（token过期）
+    if (createResponse.status === 401) {
+      console.log("🔄 Token过期，尝试刷新...");
+      await refreshAccessToken();
+      const newToken = await getAccessToken();
+      if (!newToken) {
+        throw new Error("登录已过期，请重新登录");
+      }
+
+      headers.Authorization = `Bearer ${newToken}`;
+      const retryResponse = await fetch(`${API_BASE_URL}/diary/voice/async`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (!retryResponse.ok) {
+        throw new Error("登录已过期，请重新登录");
+      }
+
+      const retryData = await retryResponse.json();
+      return { taskId: retryData.task_id, headers };
+    }
+
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text().catch(() => "未知错误");
+      throw new Error(`创建任务失败: ${createResponse.status} - ${errorText}`);
+    }
+
+    const taskData = await createResponse.json();
+    const taskId = taskData.task_id;
+
+    console.log("✅ 任务已创建:", taskId);
+    return { taskId, headers };
+  } catch (error: any) {
+    console.log("⚠️ 创建语音日记任务失败:", error);
+    throw error;
+  }
+}
+
+/**
  * 创建语音日记（实时进度版 - 轮询模式）
  *
  * 📚 学习点：这是专业的任务队列模式
@@ -477,18 +638,22 @@ export interface ProgressCallback {
  * @param audioUri - 本地音频文件URI
  * @param duration - 音频时长（秒）
  * @param onProgress - 进度回调函数（可选）
+ * @param imageUrls - 图片URL列表（可选，用于图片+语音日记）
+ * @param content - 可选的文字内容
  * @returns Promise<Diary> - 最终创建的日记
  */
 export async function createVoiceDiaryStream(
   audioUri: string,
   duration: number,
   onProgress?: ProgressCallback,
-  imageUrls?: string[] // ✅ 新增：图片URL列表（用于图片+语音日记）
+  imageUrls?: string[], // ✅ 新增：图片URL列表（用于图片+语音日记）
+  content?: string // ✅ 新增：文字内容
 ): Promise<Diary> {
   console.log("🎤 创建语音日记（实时进度版 - 轮询模式）");
   console.log("音频URI:", audioUri);
   console.log("时长:", duration, "秒");
   console.log("图片数量:", imageUrls?.length || 0);
+  console.log("文字内容:", content ? "有" : "无");
 
   try {
     // 第1步：创建FormData
@@ -503,6 +668,11 @@ export async function createVoiceDiaryStream(
     // ✅ 如果有图片，添加图片URL列表（JSON字符串）
     if (imageUrls && imageUrls.length > 0) {
       formData.append("image_urls", JSON.stringify(imageUrls));
+    }
+
+    // ✅ 如果有文字内容，添加文字
+    if (content && content.trim()) {
+      formData.append("content", content.trim());
     }
 
     // 第2步：获取认证token
@@ -564,11 +734,58 @@ export async function createVoiceDiaryStream(
     const taskId = taskData.task_id;
 
     console.log("✅ 任务已创建:", taskId);
-
+    
     // 第4步：轮询查询进度
     return await pollTaskProgress(taskId, headers, onProgress);
   } catch (error: any) {
     console.log("⚠️ 创建语音日记失败:", error);
+    throw error;
+  }
+}
+
+/**
+ * 补充图片URL到正在处理的任务（用于并行优化）
+ * 
+ * @param taskId - 任务ID
+ * @param imageUrls - 图片URL列表
+ */
+export async function addImagesToTask(
+  taskId: string,
+  imageUrls: string[]
+): Promise<void> {
+  console.log(`📸 补充图片URL到任务 ${taskId}，共 ${imageUrls.length} 张`);
+
+  // ✅ 检查图片URL是否为空
+  if (!imageUrls || imageUrls.length === 0) {
+    throw new Error("无图片URL：图片上传失败或未选择图片");
+  }
+
+  try {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      throw new Error("未登录");
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/diary/voice/progress/${taskId}/images`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(imageUrls), // 后端期望接收 List[str]
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "未知错误");
+      throw new Error(`补充图片URL失败: ${response.status} - ${errorText}`);
+    }
+
+    console.log("✅ 图片URL已补充到任务");
+  } catch (error: any) {
+    console.error("❌ 补充图片URL失败:", error);
     throw error;
   }
 }
@@ -590,7 +807,7 @@ export async function createVoiceDiaryStream(
  * - 最大等待时间：16秒
  * - 优点：网络差时不会频繁重试，减少服务器压力，更省电
  */
-async function pollTaskProgress(
+export async function pollTaskProgress(
   taskId: string,
   headers: Record<string, string>,
   onProgress?: ProgressCallback
@@ -630,17 +847,32 @@ async function pollTaskProgress(
 
       // 更新进度回调
       if (onProgress) {
-        // 步骤映射：后端step 0-5 映射到前端step 0-4
-        let frontendStep = progressData.step;
-        if (progressData.step > 0) {
-          frontendStep = progressData.step - 1;
+        // ✅ 步骤映射：根据进度值推断前端步骤（更可靠）
+        // 前端 step: 0(上传) -> 1(转录) -> 2(润色) -> 3(标题) -> 4(反馈)
+        // 进度区间: 0-20% -> 20-50% -> 50-70% -> 70-85% -> 85-100%
+        const progress = progressData.progress || 0;
+        let frontendStep = 0;
+
+        if (progress < 20) {
+          frontendStep = 0; // 上传
+        } else if (progress < 50) {
+          frontendStep = 1; // 转录
+        } else if (progress < 70) {
+          frontendStep = 2; // 润色
+        } else if (progress < 85) {
+          frontendStep = 3; // 标题
+        } else {
+          frontendStep = 4; // 反馈
         }
+
         frontendStep = Math.max(0, Math.min(frontendStep, 4));
+
+        console.log(`📊 后端进度: step=${progressData.step}, progress=${progress}%, step_name=${progressData.step_name}, 映射到前端step=${frontendStep}`);
 
         onProgress({
           step: frontendStep,
           step_name: progressData.step_name || "",
-          progress: progressData.progress || 0,
+          progress: progress,
           message: progressData.message || "",
         });
       }

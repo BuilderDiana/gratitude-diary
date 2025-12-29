@@ -26,16 +26,25 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { useVoiceRecording } from "../hooks/useVoiceRecording";
 import {
   createImageOnlyDiary,
   createVoiceDiaryStream,
+  createVoiceDiaryTask,
+  addImagesToTask,
+  pollTaskProgress,
+  deleteDiary,
+  updateDiary,
   ProgressCallback,
+  Diary,
 } from "../services/diaryService";
 import { uploadDiaryImages } from "../services/diaryService";
 import ImageInputIcon from "../assets/icons/addImageIcon.svg";
 import TextInputIcon from "../assets/icons/textInputIcon.svg";
 import { t } from "../i18n";
-import { Typography } from "../styles/typography";
+import ProcessingModal from "./ProcessingModal";
+import AudioPlayer from "./AudioPlayer";
+import { Typography, getFontFamilyForText } from "../styles/typography";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 // 4列布局：左右padding 20*2=40，3个间距 8*3=6，尽可能填满宽度，不留多余空白
@@ -47,7 +56,6 @@ interface ImageDiaryModalProps {
   onSuccess: () => void;
   maxImages?: number;
   onAddImage?: () => void; // 添加图片回调
-  onAddVoice?: () => void; // ✅ 移除：不再需要回调，直接在内部处理
   onAddText?: () => void; // 添加文字回调
 }
 
@@ -57,23 +65,42 @@ export default function ImageDiaryModal({
   onSuccess,
   maxImages = 9,
   onAddImage,
-  onAddVoice,
   onAddText,
 }: ImageDiaryModalProps) {
   const [images, setImages] = useState<string[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
+
   const [showPicker, setShowPicker] = useState(false); // 显示底部选择器
   const [showConfirmModal, setShowConfirmModal] = useState(false); // 显示确认弹窗
   const [textContent, setTextContent] = useState(""); // 文字内容
   // ✅ 文字输入框默认显示（用户选择图片后自动显示）
 
-  // ✅ 新增：录音相关状态
+  const [isSaving, setIsSaving] = useState(false); // ✅ 普通保存状态（无AI）
+  // ✅ Toast 状态
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setToastVisible(true);
+    setTimeout(() => setToastVisible(false), 1500);
+  };
+
+  // ✅ 使用自定义 Hook 管理录音逻辑
+  const {
+    isRecording,
+    isPaused,
+    duration: recordingDuration,
+    isStarting,
+    nearLimit,
+    startRecording,
+    pauseRecording,
+    resumeRecording,
+    stopRecording,
+    cancelRecording,
+  } = useVoiceRecording();
+
   const [isRecordingMode, setIsRecordingMode] = useState(false); // 是否进入录音模式
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [nearLimit, setNearLimit] = useState(false);
 
   // ✅ 新增：处理进度状态
   const [processingStep, setProcessingStep] = useState(0);
@@ -82,21 +109,34 @@ export default function ImageDiaryModal({
   const currentProgressRef = useRef(0);
   const progressAnimationRef = useRef<NodeJS.Timeout | null>(null);
 
+  // ✅ 新增：结果预览页面状态
+  const [showResult, setShowResult] = useState(false);
+  const [resultDiary, setResultDiary] = useState<Diary | null>(null);
+  const [pendingDiaryId, setPendingDiaryId] = useState<string | null>(null);
+  const [hasSavedPendingDiary, setHasSavedPendingDiary] = useState(false);
+
+  // ✅ 新增：编辑状态
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isEditingContent, setIsEditingContent] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
+  const [editedContent, setEditedContent] = useState("");
+  const [hasChanges, setHasChanges] = useState(false);
+
+  // ✅ 新增：音频播放状态（用于结果页面）
+  const [isPlayingResult, setIsPlayingResult] = useState(false);
+  const [resultCurrentTime, setResultCurrentTime] = useState(0);
+  const [resultDuration, setResultDuration] = useState(0);
+  const resultSoundRef = useRef<Audio.Sound | null>(null);
+
   // ✅ 新增：录音动画值
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const waveAnim1 = useRef(new Animated.Value(0)).current;
   const waveAnim2 = useRef(new Animated.Value(0)).current;
   const waveAnim3 = useRef(new Animated.Value(0)).current;
 
-  // ✅ 新增：录音相关refs
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isStartingRef = useRef(false);
-  const hasShown9MinWarning = useRef(false);
-  const startedAtRef = useRef<number | null>(null);
-
-  // ✅ 处理步骤配置（与 RecordingModal 保持一致）
-  const processingSteps = [
+  // ✅ 处理步骤配置
+  // 语音相关场景使用完整步骤（包含上传声音、倾听等）
+  const voiceProcessingSteps = [
     { icon: "📤", text: t("diary.processingSteps.upload"), progress: 20 },
     { icon: "👂", text: t("diary.processingSteps.listen"), progress: 50 },
     { icon: "✨", text: t("diary.processingSteps.polish"), progress: 70 },
@@ -104,31 +144,98 @@ export default function ImageDiaryModal({
     { icon: "💬", text: t("diary.processingSteps.feedback"), progress: 100 },
   ];
 
+  // ✅ 图片+文字场景专用步骤（不包含语音相关步骤）
+  const imageTextProcessingSteps = [
+    { icon: "📤", text: t("diary.processingSteps.uploadImages"), progress: 25 },
+    { icon: "✨", text: t("diary.processingSteps.polishText"), progress: 50 },
+    {
+      icon: "💭",
+      text: t("diary.processingSteps.generateTitle"),
+      progress: 75,
+    },
+    {
+      icon: "💬",
+      text: t("diary.processingSteps.generateFeedback"),
+      progress: 100,
+    },
+  ];
+
+  // ✅ 根据场景选择对应的处理步骤
+  // 如果正在录音模式，使用语音步骤；否则使用图片+文字步骤
+  const processingSteps = isRecordingMode
+    ? voiceProcessingSteps
+    : imageTextProcessingSteps;
+
+  // ✅ 使用 useRef 存储 cancelRecording，避免依赖项变化导致无限循环
+  const cancelRecordingRef = useRef(cancelRecording);
+  useEffect(() => {
+    cancelRecordingRef.current = cancelRecording;
+  }, [cancelRecording]);
+
   // Modal 打开时，显示底部选择器
   useEffect(() => {
-    if (visible && images.length === 0) {
-      setShowPicker(true);
+    // ✅ 关键修复：当 Modal 打开且没有图片时，显示选择器
+    // 当有图片时，确保选择器关闭
+    // ✅ 如果正在处理或显示结果页面，不显示选择器
+    if (visible && !isProcessing && !showResult) {
+      const shouldShowPicker = images.length === 0;
+      // ✅ 使用函数式更新，只在状态真正需要改变时才更新
+      setShowPicker((prev) => {
+        if (shouldShowPicker && !prev) return true;
+        if (!shouldShowPicker && prev) return false;
+        return prev; // 状态不需要改变，返回原值
+      });
+    } else if (visible && (isProcessing || showResult)) {
+      // ✅ 如果正在处理或显示结果，确保选择器关闭
+      setShowPicker(false);
     }
-    // ✅ 重置录音模式状态
+    // ✅ 重置录音模式状态并清理录音资源
     if (!visible) {
+      // ✅ Modal 关闭时，重置所有状态，防止下次打开时出现残留状态
       setIsRecordingMode(false);
-      setIsRecording(false);
-      setIsPaused(false);
-      setRecordingDuration(0);
       setIsProcessing(false);
+      setShowResult(false);
+      setShowPicker(false);
+      setImages([]);
+      setTextContent("");
+      setResultDiary(null);
+      setIsEditingTitle(false);
+      setIsEditingContent(false);
+      setEditedTitle("");
+      setEditedContent("");
+      setHasChanges(false);
+      setProcessingStep(0);
+      setProcessingProgress(0);
+      setShowConfirmModal(false);
+      // ✅ 关键修复：Modal 关闭时清理所有音频资源，防止下次打开时冲突
+      // 1. 清理录音资源（使用 ref 避免依赖项变化）
+      if (isRecording || recordingDuration > 0) {
+        cancelRecordingRef.current().catch(console.error);
+      }
+      // 2. 清理音频播放器
+      if (resultSoundRef.current) {
+        resultSoundRef.current.unloadAsync().catch(console.error);
+        resultSoundRef.current = null;
+        setIsPlayingResult(false);
+      }
     }
-  }, [visible]);
+    // ✅ 移除 cancelRecording 从依赖项数组，使用 ref 代替
+    // ✅ 添加 isProcessing 到依赖项，确保处理状态变化时也能正确控制选择器
+  }, [
+    visible,
+    images.length,
+    showResult,
+    isProcessing,
+    isRecording,
+    recordingDuration,
+  ]);
 
   // ✅ 清理录音资源
   useEffect(() => {
     return () => {
-      if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(console.log);
+      if (progressAnimationRef.current) {
+        clearInterval(progressAnimationRef.current);
       }
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-      }
-      deactivateKeepAwake();
     };
   }, []);
 
@@ -257,33 +364,36 @@ export default function ImageDiaryModal({
       return;
     }
 
-    // ✅ 如果用户已经输入了文字内容，直接提交，不显示确认弹窗
-    if (textContent.trim().length > 0) {
-      await doSave();
+    // ✅ 如果没有文字内容，走纯图片快速保存通道
+    if (textContent.trim().length === 0) {
+      // 如果文字输入框为空，显示确认弹窗询问是否添加内容
+      setShowConfirmModal(true);
       return;
     }
 
-    // 如果文字输入框为空，显示确认弹窗询问是否添加内容
-    setShowConfirmModal(true);
+    // 如果有文字内容，走 AI 处理流程
+    await doSaveWithAI();
   };
 
-  const doSave = async () => {
+  // ✅ 纯图片保存（无AI，直接保存）
+  const doSaveImageOnly = async () => {
     setIsSaving(true);
     try {
-      // 如果有文字内容，一起保存；否则只保存图片
-      await createImageOnlyDiary(images, textContent.trim() || undefined);
-      Alert.alert("成功", "图片日记已保存", [
-        {
-          text: "好的",
-          onPress: () => {
-            setImages([]);
-            setTextContent("");
-            setShowPicker(false);
-            setIsSaving(false);
-            onSuccess();
-          },
-        },
-      ]);
+      // 直接调用创建图片日记接口
+      await createImageOnlyDiary(images);
+
+      // ✅ 统一使用toast反馈
+      showToast(t("success.diaryCreated"));
+
+      // ✅ 短暂延迟让用户看到toast，然后统一跳转
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      setIsSaving(false);
+      setImages([]);
+      setTextContent("");
+      setShowPicker(false);
+      // ✅ 统一通过onSuccess回调跳转
+      onSuccess();
     } catch (error: any) {
       console.error("保存失败:", error);
       Alert.alert("保存失败", error.message || "请重试");
@@ -291,53 +401,165 @@ export default function ImageDiaryModal({
     }
   };
 
-  const handleCancel = () => {
+  const doSaveWithAI = async () => {
+    setIsProcessing(true);
+    setProcessingStep(0); // ✅ 重置步骤为0（上传图片步骤）
+    setProcessingProgress(0);
+    currentProgressRef.current = 0;
+    progressAnimValue.setValue(0);
+
+    try {
+      // ✅ 优化：图片上传和AI处理并行执行
+      // 图片不参与AI处理（已去掉Vision模型），所以可以并行，缩短总时间
+      console.log("📤 启动图片上传（与AI处理并行）...");
+      const imageUploadPromise = uploadDiaryImages(images).catch(
+        (error: any) => {
+          console.error("❌ 图片上传失败:", error);
+          throw error;
+        }
+      );
+
+      // ✅ 模拟AI处理进度（图片+文字场景专用）
+      // 步骤：上传图片(0-25%) -> 润色文字(25-50%) -> 生成标题(50-75%) -> 生成反馈(75-100%)
+      // 注意：此函数专门用于图片+文字场景，不包含语音相关步骤
+      const simulateProgress = () => {
+        let currentStep = 0;
+        // ✅ 使用图片+文字专用步骤配置（不包含语音相关步骤）
+        const steps = imageTextProcessingSteps.map((step, index) => ({
+          step: index,
+          progress: step.progress,
+          text: step.text,
+        }));
+
+        const updateProgress = () => {
+          if (currentStep < steps.length) {
+            const stepInfo = steps[currentStep];
+            // ✅ 确保步骤索引在 imageTextProcessingSteps 范围内（0-3）
+            setProcessingStep(stepInfo.step);
+            smoothUpdateProgress(stepInfo.progress);
+
+            if (currentStep < steps.length - 1) {
+              currentStep++;
+              // ✅ 优化延迟时间，让进度更自然
+              // 上传图片(300ms) -> 润色文字(800ms) -> 生成标题(1000ms) -> 生成反馈(800ms)
+              const delay =
+                currentStep === 1 ? 800 : currentStep === 2 ? 1000 : 800;
+              setTimeout(updateProgress, delay);
+            }
+          }
+        };
+
+        // 先更新到上传步骤
+        setTimeout(updateProgress, 300);
+      };
+
+      // ✅ 启动进度模拟
+      simulateProgress();
+
+      // ✅ 等待图片上传完成
+      const imageUrls = await imageUploadPromise;
+      console.log("✅ 图片上传完成，URLs:", imageUrls);
+
+      // ✅ 调用后端API创建日记（AI处理在后端同步进行）
+      // 注意：后端已经去掉了Vision模型，只处理文字内容
+      const diary = await createImageOnlyDiary(
+        imageUrls,
+        textContent.trim() || undefined
+      );
+
+      console.log("✅ 图片+文字日记创建成功:", diary);
+
+      // ✅ 确保进度到100%（使用图片+文字步骤的最后一个索引）
+      setProcessingStep(imageTextProcessingSteps.length - 1);
+      smoothUpdateProgress(100);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      setIsProcessing(false);
+      setResultDiary(diary);
+      setShowResult(true);
+      setPendingDiaryId(diary.diary_id);
+      setHasSavedPendingDiary(false);
+      setEditedTitle(diary.title);
+      setEditedContent(diary.polished_content);
+
+      // ✅ 统一使用toast反馈
+      showToast(t("success.diaryCreated"));
+
+      // ✅ 短暂延迟让用户看到toast
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (error: any) {
+      console.error("❌ 保存失败:", error);
+      Alert.alert("保存失败", error.message || "请重试");
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    // ✅ 如果显示结果页面且有未保存的日记，显示确认对话框
+    if (showResult && pendingDiaryId && !hasSavedPendingDiary) {
+      Alert.alert(
+        t("confirm.discardUnsavedTitle"),
+        t("confirm.discardUnsavedMessage"),
+        [
+          {
+            text: t("common.cancel"),
+            style: "cancel",
+          },
+          {
+            text: t("common.confirm"),
+            style: "destructive",
+            onPress: async () => {
+              // 删除未保存的日记
+              try {
+                await deleteDiary(pendingDiaryId);
+                console.log("✅ 已删除未保存的日记:", pendingDiaryId);
+              } catch (error) {
+                console.error("❌ 删除日记失败:", error);
+              }
+              // 清理状态并关闭
+              await cleanupAndClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    // ✅ 清理录音资源
+    if (isRecording || recordingDuration > 0) {
+      await cancelRecording();
+    }
+
+    await cleanupAndClose();
+  };
+
+  // ✅ 清理状态并关闭
+  const cleanupAndClose = async () => {
+    // 清理音频播放资源
+    if (resultSoundRef.current) {
+      try {
+        await resultSoundRef.current.unloadAsync();
+      } catch (_) {}
+      resultSoundRef.current = null;
+    }
+
     setImages([]);
     setTextContent("");
     setShowPicker(false);
     setIsRecordingMode(false);
-    setIsRecording(false);
-    setIsPaused(false);
-    setRecordingDuration(0);
+    setShowResult(false);
+    setResultDiary(null);
+    setPendingDiaryId(null);
+    setHasSavedPendingDiary(false);
+    setIsEditingTitle(false);
+    setIsEditingContent(false);
+    setEditedTitle("");
+    setEditedContent("");
+    setHasChanges(false);
+    setIsPlayingResult(false);
+    setResultCurrentTime(0);
+    setResultDuration(0);
     onClose();
-  };
-
-  // ========== 录音相关函数 ==========
-
-  /**
-   * 配置录音音频模式
-   */
-  const configureRecordingAudioMode = async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: 2,
-        interruptionModeAndroid: 1,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error("配置录音音频模式失败:", error);
-    }
-  };
-
-  /**
-   * 请求录音权限
-   */
-  const requestAudioPermission = async () => {
-    try {
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) {
-        Alert.alert("需要麦克风权限", "请在设置中允许访问麦克风");
-        return false;
-      }
-      return true;
-    } catch (error) {
-      console.error("请求权限失败:", error);
-      return false;
-    }
   };
 
   /**
@@ -405,205 +627,27 @@ export default function ImageDiaryModal({
   );
 
   /**
-   * 开始录音
+   * 取消录音并退出录音模式
    */
-  const startRecording = async () => {
-    if (isStartingRef.current) return;
-    isStartingRef.current = true;
-
-    try {
-      if (recordingRef.current) {
-        try {
-          await recordingRef.current.stopAndUnloadAsync();
-        } catch (_) {}
-        recordingRef.current = null;
-      }
-
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      const hasPermission = await requestAudioPermission();
-      if (!hasPermission) {
-        setIsRecordingMode(false);
-        return;
-      }
-
-      await configureRecordingAudioMode();
-      await activateKeepAwakeAsync();
-
-      const { recording: newRecording } = await Audio.Recording.createAsync({
-        android: {
-          extension: ".m4a",
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 44100,
-          numberOfChannels: 2,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: ".m4a",
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 44100,
-          numberOfChannels: 2,
-          bitRate: 128000,
-          linearPCMBitDepth: 16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat: false,
-        },
-        web: {
-          mimeType: "audio/webm",
-          bitsPerSecond: 128000,
-        },
-      });
-
-      recordingRef.current = newRecording;
-      setIsRecording(true);
-      setIsPaused(false);
-      setRecordingDuration(0);
-      setNearLimit(false);
-      hasShown9MinWarning.current = false;
-      startedAtRef.current = Date.now();
-
-      const interval = setInterval(async () => {
-        try {
-          if (recordingRef.current) {
-            const status = await recordingRef.current.getStatusAsync();
-            if (status.isRecording) {
-              const seconds = Math.floor(status.durationMillis / 1000);
-              setRecordingDuration(seconds);
-
-              if (seconds >= 540 && !hasShown9MinWarning.current) {
-                hasShown9MinWarning.current = true;
-                setNearLimit(true);
-              }
-
-              if (seconds >= 600) {
-                setNearLimit(false);
-                await finishRecording();
-              }
-            }
-          }
-        } catch (error) {
-          console.error("获取录音状态失败:", error);
-        }
-      }, 1000);
-
-      durationIntervalRef.current = interval;
-    } catch (error) {
-      console.error("❌ 录音失败:", error);
-      Alert.alert("错误", "录音失败，请重试");
-      setIsRecordingMode(false);
-    } finally {
-      isStartingRef.current = false;
-    }
-  };
-
-  /**
-   * 暂停录音
-   */
-  const pauseRecording = async () => {
-    if (!recordingRef.current) return;
-
-    try {
-      const status = await recordingRef.current.getStatusAsync();
-      if (!status.isRecording) return;
-
-      await recordingRef.current.pauseAsync();
-      setIsPaused(true);
-
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-    } catch (error) {
-      console.error("暂停失败:", error);
-    }
-  };
-
-  /**
-   * 继续录音
-   */
-  const resumeRecording = async () => {
-    if (!recordingRef.current) return;
-
-    try {
-      const status = await recordingRef.current.getStatusAsync();
-      if (status.isRecording) return;
-      if (status.isDoneRecording) return;
-
-      await configureRecordingAudioMode();
-      await recordingRef.current.startAsync();
-      setIsPaused(false);
-
-      const interval = setInterval(async () => {
-        try {
-          if (recordingRef.current) {
-            const status = await recordingRef.current.getStatusAsync();
-            if (status.isRecording) {
-              const seconds = Math.floor(status.durationMillis / 1000);
-              setRecordingDuration(seconds);
-
-              if (seconds >= 540 && !hasShown9MinWarning.current) {
-                hasShown9MinWarning.current = true;
-                setNearLimit(true);
-              }
-
-              if (seconds >= 600) {
-                setNearLimit(false);
-                await finishRecording();
-              }
-            }
-          }
-        } catch (error) {
-          console.error("获取录音状态失败:", error);
-        }
-      }, 1000);
-
-      durationIntervalRef.current = interval;
-    } catch (error) {
-      console.error("恢复录音失败:", error);
-    }
+  const handleCancelRecording = async () => {
+    await cancelRecording();
+    setIsRecordingMode(false);
   };
 
   /**
    * 完成录音并处理
    */
   const finishRecording = async () => {
-    if (!recordingRef.current) return;
-
     try {
       console.log("✅ 完成录音");
 
-      // 获取URI（在停止之前）
-      const uri = recordingRef.current.getURI();
-      console.log("录音文件URI:", uri);
+      const recordedDuration = recordingDuration;
+      const uri = await stopRecording();
 
-      // 清理定时器
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      // 停止录音
-      await recordingRef.current.stopAndUnloadAsync();
-      recordingRef.current = null;
-      try {
-        deactivateKeepAwake();
-      } catch (_) {}
-
-      // ✅ 使用 state 中的 recordingDuration，而不是从 status 获取（更准确）
-      const recordedDuration = Math.floor(recordingDuration);
       console.log("录音时长:", recordedDuration, "秒");
 
       // ✅ 检查录音时长(最短3秒) - 与 RecordingModal 保持一致
       if (recordedDuration < 3) {
-        setIsRecording(false);
-        setIsPaused(false);
-        setRecordingDuration(0);
-
         Alert.alert("提示", "录音时间太短，请重新录制", [
           {
             text: "重新录制",
@@ -613,7 +657,7 @@ export default function ImageDiaryModal({
           {
             text: "取消",
             style: "cancel",
-            onPress: () => cancelRecording(),
+            onPress: () => handleCancelRecording(),
           },
         ]);
         return;
@@ -621,112 +665,273 @@ export default function ImageDiaryModal({
 
       if (!uri) {
         Alert.alert("错误", "录音文件不存在，请重新录制");
-        setIsRecording(false);
-        setIsPaused(false);
-        setRecordingDuration(0);
         return;
       }
 
-      setIsRecording(false);
-      setIsPaused(false);
       setIsProcessing(true);
+      setProcessingStep(0); // ✅ 关键修复：重置步骤为0（上传步骤）
       setProcessingProgress(0);
       currentProgressRef.current = 0;
       progressAnimValue.setValue(0);
 
-      // ✅ 先上传图片到S3
-      let imageUrls: string[] = [];
+      // ✅ 优化：图片上传和AI处理真正并行执行
+      // 图片不参与AI处理，所以可以并行，缩短总时间
+      let imageUploadPromise: Promise<string[]> | null = null;
       if (images.length > 0) {
-        try {
-          imageUrls = await uploadDiaryImages(images);
-          console.log("✅ 图片上传成功，URLs:", imageUrls);
-        } catch (error: any) {
-          console.error("上传图片失败:", error);
-          Alert.alert("错误", "上传图片失败，请重试");
-          setIsProcessing(false);
-          return;
-        }
+        console.log("📤 启动图片上传（与AI处理并行）...");
+        imageUploadPromise = uploadDiaryImages(images).catch((error: any) => {
+          console.error("❌ 图片上传失败:", error);
+          throw error;
+        });
       }
 
       // ✅ 进度回调
       const progressCallback: ProgressCallback = (progressData) => {
         const progress = progressData.progress;
-        let frontendStep = 0;
+        // ✅ 使用后端返回的 step（已经映射好了）
+        // pollTaskProgress 中已经将后端 step 0-5 映射到前端 step 0-4
+        let frontendStep = progressData.step || 0;
 
-        if (progress < 20) {
-          frontendStep = 0;
-        } else if (progress < 50) {
-          frontendStep = 1;
-        } else if (progress < 70) {
-          frontendStep = 2;
-        } else if (progress < 85) {
-          frontendStep = 3;
-        } else {
-          frontendStep = 4;
-        }
-
+        // ✅ 确保步骤在有效范围内
         frontendStep = Math.max(
           0,
           Math.min(frontendStep, processingSteps.length - 1)
+        );
+
+        console.log(
+          `📊 进度更新: step=${frontendStep}, progress=${progress}%, message=${progressData.message}`
         );
 
         setProcessingStep(frontendStep);
         smoothUpdateProgress(progress);
       };
 
-      // ✅ 调用后端API（图片+语音）
-      const diary = await createVoiceDiaryStream(
+      // ✅ 立即启动AI处理（不等待图片上传）
+      // 使用新的 createVoiceDiaryTask 函数，只创建任务并返回 task_id
+      console.log("🎤 启动AI处理（与图片上传并行）...");
+
+      // 创建任务（不传图片URL）
+      const { taskId, headers } = await createVoiceDiaryTask(
         uri,
         recordedDuration,
-        progressCallback,
-        imageUrls.length > 0 ? imageUrls : undefined
+        textContent.trim() || undefined
       );
 
+      // ✅ 启动轮询（后台执行）
+      const aiProcessPromise = pollTaskProgress(
+        taskId,
+        headers,
+        progressCallback
+      );
+
+      // ✅ 等待图片上传完成，然后补充到任务中
+      let imageUrls: string[] = [];
+      if (imageUploadPromise) {
+        try {
+          imageUrls = await imageUploadPromise;
+          console.log("✅ 图片上传完成，补充图片URL到任务...");
+
+          // ✅ 补充图片URL到任务（AI处理还在进行中）
+          await addImagesToTask(taskId, imageUrls);
+          console.log("✅ 图片URL已补充到任务");
+        } catch (error: any) {
+          console.error("❌ 图片上传失败:", error);
+          const errorMessage = error.message || "上传图片失败，请重试";
+          Alert.alert("错误", errorMessage);
+          setIsProcessing(false);
+          return;
+        }
+      }
+
+      // ✅ 等待AI处理完成（后端会在保存时等待图片URL）
+      const diary = await aiProcessPromise;
+
       console.log("✅ 图片+语音日记创建成功:", diary);
+      console.log("📸 日记中的图片URLs:", diary.image_urls);
 
       setIsProcessing(false);
-      setImages([]);
-      setTextContent("");
+      setResultDiary(diary);
+      setShowResult(true);
+      setPendingDiaryId(diary.diary_id);
+      setHasSavedPendingDiary(false);
+      setEditedTitle(diary.title);
+      setEditedContent(diary.polished_content);
       setIsRecordingMode(false);
       try {
         deactivateKeepAwake();
       } catch (_) {}
-
-      Alert.alert("成功", "日记已保存", [
-        {
-          text: "好的",
-          onPress: () => {
-            onSuccess();
-          },
-        },
-      ]);
     } catch (error: any) {
       console.error("❌ 处理失败:", error);
       Alert.alert("错误", error.message || "处理失败，请重试");
       setIsProcessing(false);
-      setIsRecording(false);
-      setIsPaused(false);
       deactivateKeepAwake();
     }
   };
 
-  /**
-   * 取消录音
-   */
-  const cancelRecording = () => {
-    setIsRecordingMode(false);
-    setIsRecording(false);
-    setIsPaused(false);
-    setRecordingDuration(0);
-    if (recordingRef.current) {
-      recordingRef.current.stopAndUnloadAsync().catch(console.log);
-      recordingRef.current = null;
+  // ✅ 保存并关闭（结果页面）
+  const handleSaveAndClose = async () => {
+    if (!resultDiary) return;
+
+    try {
+      console.log("💾 保存日记...");
+
+      // ✅ 检查是否有修改
+      const hasTitleChange =
+        isEditingTitle && editedTitle.trim() !== resultDiary.title;
+      const hasContentChange =
+        isEditingContent &&
+        editedContent.trim() !== resultDiary.polished_content;
+
+      if (hasTitleChange || hasContentChange) {
+        console.log("📝 更新日记到后端:", resultDiary.diary_id);
+        await updateDiary(
+          resultDiary.diary_id,
+          hasContentChange ? editedContent.trim() : undefined,
+          hasTitleChange ? editedTitle.trim() : undefined
+        );
+        console.log("✅ 后端更新成功");
+      }
+
+      setHasSavedPendingDiary(true);
+      setPendingDiaryId(null);
+
+      // ✅ 清理音频播放资源
+      if (resultSoundRef.current) {
+        try {
+          await resultSoundRef.current.unloadAsync();
+        } catch (_) {}
+        resultSoundRef.current = null;
+      }
+
+      // ✅ 先重置所有状态（必须在 onClose 之前重置，避免 useEffect 触发 showPicker）
+      // 关键：先重置 images 和 showPicker，防止 useEffect 重新打开选择器
+      setImages([]); // ✅ 先重置 images，这样 useEffect 不会触发 showPicker
+      setShowPicker(false); // ✅ 确保选择器关闭
+      setShowResult(false);
+      setResultDiary(null);
+      setIsPlayingResult(false);
+      setResultCurrentTime(0);
+      setResultDuration(0);
+      setIsEditingTitle(false);
+      setIsEditingContent(false);
+      setEditedTitle("");
+      setEditedContent("");
+      setHasChanges(false);
+      setTextContent("");
+      setIsRecordingMode(false);
+      setIsProcessing(false); // ✅ 确保处理状态已关闭
+      setProcessingStep(0); // ✅ 重置处理步骤
+      setProcessingProgress(0); // ✅ 重置处理进度
+      setShowConfirmModal(false); // ✅ 确保确认弹窗关闭
+
+      // ✅ 显示成功 Toast
+      showToast(t("success.diaryCreated"));
+
+      // ✅ 先关闭 Modal，确保所有 UI 状态都已清理
+      // 在关闭前，确保 showResult 和 showPicker 都已重置，防止 useEffect 再次触发
+      onClose();
+
+      // ✅ 短暂延迟让用户看到 Toast，然后通知父组件刷新列表
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      onSuccess();
+    } catch (error: any) {
+      console.error("❌ 保存失败:", error);
+      Alert.alert(
+        t("error.saveFailed"),
+        error.message || t("error.retryMessage")
+      );
     }
-    if (durationIntervalRef.current) {
-      clearInterval(durationIntervalRef.current);
-      durationIntervalRef.current = null;
+  };
+
+  // ✅ 开始编辑标题
+  const startEditingTitle = () => {
+    if (!resultDiary) return;
+    setEditedTitle(resultDiary.title);
+    setIsEditingTitle(true);
+  };
+
+  // ✅ 开始编辑内容
+  const startEditingContent = () => {
+    if (!resultDiary) return;
+    setEditedContent(resultDiary.polished_content);
+    setIsEditingContent(true);
+  };
+
+  // ✅ 播放结果页面的音频
+  const handlePlayResultAudio = async () => {
+    if (!resultDiary?.audio_url) return;
+
+    try {
+      // 如果正在播放,则暂停
+      if (isPlayingResult) {
+        if (resultSoundRef.current) {
+          await resultSoundRef.current.pauseAsync();
+          setIsPlayingResult(false);
+        }
+        return;
+      }
+
+      // ✅ 恢复播放
+      if (resultSoundRef.current) {
+        await resultSoundRef.current.playAsync();
+        setIsPlayingResult(true);
+        return;
+      }
+
+      // 停止之前的音频
+      const soundToUnload = resultSoundRef.current;
+      if (soundToUnload) {
+        try {
+          await (soundToUnload as Audio.Sound).unloadAsync();
+        } catch (_) {}
+        resultSoundRef.current = null;
+      }
+
+      // 设置音频模式
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+
+      // 创建音频播放器
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: resultDiary.audio_url },
+        { shouldPlay: true }
+      );
+
+      resultSoundRef.current = sound;
+      setIsPlayingResult(true);
+
+      // ✅ 初始化 duration
+      const initialDuration = resultDiary.audio_duration || 0;
+      if (initialDuration > 0) {
+        setResultDuration(initialDuration);
+      } else {
+        const status = await sound.getStatusAsync();
+        if (status.isLoaded && status.durationMillis) {
+          setResultDuration(status.durationMillis / 1000);
+        }
+      }
+
+      // ✅ 监听播放状态
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded) {
+          if (status.positionMillis !== null) {
+            setResultCurrentTime(status.positionMillis / 1000);
+          }
+          if (status.didJustFinish) {
+            setIsPlayingResult(false);
+            setResultCurrentTime(0);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("❌ 播放音频失败:", error);
+      Alert.alert("错误", "播放音频失败，请重试");
     }
-    deactivateKeepAwake();
   };
 
   // ✅ 录音动画效果
@@ -805,8 +1010,316 @@ export default function ImageDiaryModal({
     };
   }, [isRecording, isPaused]);
 
+  // ✅ 渲染结果页面Header
+  const renderResultHeader = () => {
+    return (
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={handleCancel}
+          accessibilityLabel={t("common.close")}
+          accessibilityHint={t("accessibility.button.closeHint")}
+          accessibilityRole="button"
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="close-outline" size={24} color="#666" />
+        </TouchableOpacity>
+        <Text style={styles.title}>{t("createImageDiary.title")}</Text>
+        <View style={styles.headerRight} />
+      </View>
+    );
+  };
+
+  // ✅ 渲染结果预览页面
+  const renderResultView = () => {
+    if (!resultDiary) return null;
+
+    return (
+      <>
+        {/* 顶部Header */}
+        {renderResultHeader()}
+
+        {/* 可滚动内容 */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+        >
+          <ScrollView
+            style={styles.resultScrollView}
+            contentContainerStyle={styles.resultScrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+          >
+            {/* 图片网格 */}
+            {resultDiary.image_urls && resultDiary.image_urls.length > 0 && (
+              <View style={styles.resultImageGrid}>
+                {resultDiary.image_urls.map((url, index) => (
+                  <View
+                    key={`${url}-${index}`}
+                    style={[
+                      styles.resultImageWrapper,
+                      (index + 1) % 4 === 0 &&
+                        styles.resultImageWrapperLastInRow,
+                    ]}
+                  >
+                    <Image
+                      source={{ uri: url }}
+                      style={styles.resultThumbnail}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* 音频播放器 */}
+            {resultDiary.audio_url && (
+              <AudioPlayer
+                audioUrl={resultDiary.audio_url}
+                audioDuration={resultDiary.audio_duration}
+                isPlaying={isPlayingResult}
+                currentTime={resultCurrentTime}
+                totalDuration={resultDuration}
+                hasPlayedOnce={false}
+                onPlayPress={handlePlayResultAudio}
+                style={styles.resultAudioPlayer}
+              />
+            )}
+
+            {/* 标题和内容卡片 */}
+            <View style={styles.resultDiaryCard}>
+              {/* 标题 */}
+              {isEditingTitle ? (
+                <TextInput
+                  style={[
+                    styles.editTitleInput,
+                    {
+                      fontFamily: getFontFamilyForText(
+                        editedTitle || resultDiary.title,
+                        "bold"
+                      ),
+                    },
+                  ]}
+                  value={editedTitle}
+                  onChangeText={(text) => {
+                    setEditedTitle(text);
+                    setHasChanges(text.trim() !== resultDiary.title);
+                  }}
+                  autoFocus
+                  multiline
+                  placeholder={t("diary.placeholderTitle")}
+                  scrollEnabled={false}
+                  accessibilityLabel={t("diary.placeholderTitle")}
+                  accessibilityHint={t("accessibility.input.textHint")}
+                  accessibilityRole="text"
+                />
+              ) : (
+                <TouchableOpacity
+                  onPress={startEditingTitle}
+                  activeOpacity={0.7}
+                  accessibilityLabel={resultDiary.title}
+                  accessibilityHint={t("accessibility.button.editHint")}
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.resultTitleText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.title,
+                          "bold"
+                        ),
+                      },
+                    ]}
+                  >
+                    {resultDiary.title}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* 内容 */}
+              {isEditingContent ? (
+                <TextInput
+                  style={[
+                    styles.editContentInput,
+                    {
+                      fontFamily: getFontFamilyForText(
+                        editedContent || resultDiary.polished_content,
+                        "regular"
+                      ),
+                    },
+                  ]}
+                  value={editedContent}
+                  onChangeText={(text) => {
+                    setEditedContent(text);
+                    setHasChanges(text.trim() !== resultDiary.polished_content);
+                  }}
+                  autoFocus
+                  multiline
+                  placeholder={t("diary.placeholderContent")}
+                  scrollEnabled={true}
+                  accessibilityLabel={t("diary.placeholderContent")}
+                  accessibilityHint={t("accessibility.input.textHint")}
+                  accessibilityRole="text"
+                />
+              ) : (
+                <TouchableOpacity
+                  onPress={startEditingContent}
+                  activeOpacity={0.7}
+                  accessibilityLabel={
+                    resultDiary.polished_content.substring(0, 100) +
+                    (resultDiary.polished_content.length > 100 ? "..." : "")
+                  }
+                  accessibilityHint={t("accessibility.button.editHint")}
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.resultContentText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.polished_content,
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
+                    {resultDiary.polished_content}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* AI反馈 - 编辑时隐藏 */}
+            {!isEditingTitle &&
+              !isEditingContent &&
+              !!resultDiary?.ai_feedback && (
+                <View style={styles.resultFeedbackCard}>
+                  <View style={styles.resultFeedbackHeader}>
+                    <Ionicons name="sparkles" size={18} color="#E56C45" />
+                    <Text
+                      style={[
+                        styles.resultFeedbackTitle,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            t("diary.aiFeedbackTitle"),
+                            "medium"
+                          ),
+                        },
+                      ]}
+                    >
+                      {t("diary.aiFeedbackTitle")}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.resultFeedbackText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.ai_feedback,
+                          "regular"
+                        ),
+                      },
+                    ]}
+                    numberOfLines={0}
+                    ellipsizeMode="clip"
+                  >
+                    {resultDiary.ai_feedback}
+                  </Text>
+                </View>
+              )}
+
+            {/* 底部间距 */}
+            <View style={{ height: 100 }} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* 底部保存按钮 */}
+        <View style={styles.resultBottomBar}>
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={handleSaveAndClose}
+            accessibilityLabel={t("diary.saveToJournal")}
+            accessibilityHint={t("accessibility.button.saveHint")}
+            accessibilityRole="button"
+          >
+            <Text
+              style={[
+                styles.saveButtonText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("diary.saveToJournal"),
+                    "semibold"
+                  ),
+                },
+              ]}
+            >
+              {t("diary.saveToJournal")}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </>
+    );
+  };
+
   // 如果没有图片，不渲染内容
   if (!visible) return null;
+
+  // ✅ 如果显示结果页面，渲染结果视图
+  if (showResult) {
+    return (
+      <Modal visible={visible} transparent animationType="slide">
+        <View style={styles.overlay}>
+          <View
+            style={[
+              styles.modal,
+              // ✅ 根据状态动态调整高度（与 TextInputModal 和 RecordingModal 保持一致）
+              isProcessing
+                ? styles.modalProcessing // 加载状态：固定高度
+                : styles.modalResult, // 结果状态：根据内容动态调整
+            ]}
+          >
+            {renderResultView()}
+
+            {/* Toast 提示 */}
+            {toastVisible && (
+              <View style={styles.toastOverlay} pointerEvents="none">
+                <View style={styles.toastContainer}>
+                  <Text
+                    style={[
+                      styles.toastText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          toastMessage,
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
+                    {toastMessage}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* ✅ 统一的处理加载Modal（覆盖整个屏幕） */}
+        {isProcessing && (
+          <ProcessingModal
+            visible={isProcessing}
+            processingStep={processingStep}
+            processingProgress={processingProgress}
+            steps={processingSteps.map((step) => ({
+              icon: step.icon,
+              text: step.text,
+            }))}
+          />
+        )}
+      </Modal>
+    );
+  }
 
   // 显示底部选择器
   if (showPicker) {
@@ -822,27 +1335,66 @@ export default function ImageDiaryModal({
             onPress={(e) => e.stopPropagation()}
           >
             <View style={styles.pickerContainer}>
-              <Text style={styles.pickerTitle}>选择图片</Text>
+              <Text
+                style={[
+                  styles.pickerTitle,
+                  {
+                    fontFamily: getFontFamilyForText("选择图片", "medium"),
+                  },
+                ]}
+              >
+                选择图片
+              </Text>
 
               <TouchableOpacity
                 style={styles.pickerOption}
                 onPress={handleTakePhoto}
               >
-                <Text style={styles.pickerOptionText}>📷 拍照</Text>
+                <Text
+                  style={[
+                    styles.pickerOptionText,
+                    {
+                      fontFamily: getFontFamilyForText("📷 拍照", "regular"),
+                    },
+                  ]}
+                >
+                  📷 拍照
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.pickerOption}
                 onPress={handlePickFromGallery}
               >
-                <Text style={styles.pickerOptionText}>🖼️ 从相册选择</Text>
+                <Text
+                  style={[
+                    styles.pickerOptionText,
+                    {
+                      fontFamily: getFontFamilyForText(
+                        "🖼️ 从相册选择",
+                        "regular"
+                      ),
+                    },
+                  ]}
+                >
+                  🖼️ 从相册选择
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.pickerCancel}
                 onPress={handlePickerCancel}
               >
-                <Text style={styles.pickerCancelText}>取消</Text>
+                <Text
+                  style={[
+                    styles.pickerCancelText,
+                    {
+                      fontFamily: getFontFamilyForText("取消", "regular"),
+                    },
+                  ]}
+                >
+                  取消
+                </Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -866,7 +1418,7 @@ export default function ImageDiaryModal({
   return (
     <Modal visible={visible} transparent animationType="slide">
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <View style={[styles.modal, styles.modalInput]}>
           {/* 顶部栏 - 与 TextInputModal 保持一致 */}
           <View style={styles.header}>
             <TouchableOpacity
@@ -879,7 +1431,19 @@ export default function ImageDiaryModal({
             >
               <Ionicons name="close-outline" size={24} color="#666" />
             </TouchableOpacity>
-            <Text style={styles.title}>{t("createImageDiary.title")}</Text>
+            <Text
+              style={[
+                styles.title,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("createImageDiary.title"),
+                    "medium"
+                  ),
+                },
+              ]}
+            >
+              {t("createImageDiary.title")}
+            </Text>
             <View style={styles.headerRight} />
           </View>
 
@@ -891,242 +1455,317 @@ export default function ImageDiaryModal({
           >
             <ScrollView
               style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
+              contentContainerStyle={[
+                styles.scrollContent,
+                isProcessing && { flexGrow: 1, justifyContent: "center" },
+                (isRecordingMode || isProcessing) && { paddingBottom: 320 }, // ✅ 增加底部留白，防止被录音面板遮挡
+              ]}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {/* 图片网格 */}
-              <View style={styles.imageGrid}>
-                {images.map((uri, index) => (
-                  <View
-                    key={`${uri}-${index}`}
-                    style={[
-                      styles.imageWrapper,
-                      (index + 1) % 4 === 0 && styles.imageWrapperLastInRow, // 每行最后一个
-                    ]}
-                  >
-                    <Image source={{ uri }} style={styles.thumbnail} />
-                    <TouchableOpacity
-                      style={styles.removeButton}
-                      onPress={() => handleRemoveImage(index)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="close" size={16} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-
-                {images.length < maxImages && (
-                  <TouchableOpacity
-                    style={[
-                      styles.addButton,
-                      (images.length + 1) % 4 === 0 &&
-                        styles.imageWrapperLastInRow, // 每行最后一个
-                    ]}
-                    onPress={handleAddMore}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="add" size={28} color="#D96F4C" />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* 文字输入框 - 默认显示（当有图片且非录音模式时） */}
-              {images.length > 0 && !isRecordingMode && (
+              {/* ✅ 处理中时隐藏图片和输入框 */}
+              {!isProcessing && (
                 <>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.textInput}
-                      placeholder={t("createImageDiary.textPlaceholder")}
-                      placeholderTextColor="#999"
-                      value={textContent}
-                      onChangeText={setTextContent}
-                      multiline
-                      maxLength={500}
-                      textAlignVertical="top"
-                      accessibilityLabel={t("createImageDiary.textPlaceholder")}
-                      accessibilityHint={t("accessibility.input.textHint")}
-                      accessibilityRole="text"
-                    />
-                    <Text
-                      style={[
-                        styles.charCount,
-                        textContent.length > 0 &&
-                          textContent.length < 10 &&
-                          styles.charCountWarning,
-                      ]}
-                    >
-                      {textContent.length}/500
-                    </Text>
-                  </View>
-
-                  {/* 完成按钮 - 放在输入框正下面 */}
-                  <TouchableOpacity
-                    style={styles.completeButton}
-                    onPress={handleSave}
-                    disabled={isSaving}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.completeButtonText}>
-                      {isSaving
-                        ? t("common.saving")
-                        : t("createImageDiary.submitButton")}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
-
-              {/* ✅ 录音界面（录音模式时显示） */}
-              {isRecordingMode && images.length > 0 && (
-                <>
-                  {/* 录音动画区域 - 完全复用 RecordingModal 的结构 */}
-                  <View style={styles.recordingAnimationArea}>
-                    {isProcessing ? (
+                  {/* 图片网格 */}
+                  <View style={styles.imageGrid}>
+                    {images.map((uri, index) => (
                       <View
-                        style={styles.processingCenter}
-                        accessibilityLiveRegion="polite"
-                        accessibilityLabel={t(
-                          "accessibility.status.processing",
-                          {
-                            step: processingStep + 1,
-                          }
-                        )}
+                        key={`${uri}-${index}`}
+                        style={[
+                          styles.imageWrapper,
+                          (index + 1) % 4 === 0 && styles.imageWrapperLastInRow, // 每行最后一个
+                        ]}
                       >
-                        <View style={styles.processingContent}>
-                          {/* Emoji - 单独一行，居中对齐 */}
-                          <View style={styles.emojiContainer}>
-                            <Text style={styles.stepEmoji}>
-                              {processingSteps[processingStep]?.icon}
-                            </Text>
-                          </View>
-
-                          {/* 步骤文案 - 单独一行，居中对齐 */}
-                          <View style={styles.textContainer}>
-                            <Text style={styles.currentStepText}>
-                              {processingSteps[processingStep]?.text}
-                            </Text>
-                          </View>
-
-                          {/* 进度条和百分比 */}
-                          <View style={styles.progressSection}>
-                            <View style={styles.progressBarBg}>
-                              <View
-                                style={[
-                                  styles.progressBarFill,
-                                  { width: `${processingProgress}%` },
-                                ]}
-                              />
-                            </View>
-                            <Text
-                              style={styles.progressText}
-                              accessibilityLabel={`${t(
-                                "accessibility.status.processing"
-                              )}, ${Math.round(processingProgress)}%`}
-                            >
-                              {Math.round(processingProgress)}%
-                            </Text>
-                          </View>
-                        </View>
+                        <Image source={{ uri }} style={styles.thumbnail} />
+                        <TouchableOpacity
+                          style={styles.removeButton}
+                          onPress={() => handleRemoveImage(index)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="close" size={16} color="#fff" />
+                        </TouchableOpacity>
                       </View>
-                    ) : (
-                      <>
-                        {/* 录音波纹动画 - 完全复用 RecordingModal 的样式 */}
-                        {isRecording && !isPaused && (
-                          <>
-                            <Animated.View
-                              style={[
-                                styles.wave,
-                                {
-                                  transform: [{ scale: waveAnim1 }],
-                                  opacity: waveAnim1.interpolate({
-                                    inputRange: [0, 3],
-                                    outputRange: [0.7, 0],
-                                  }),
-                                },
-                              ]}
-                            />
-                            <Animated.View
-                              style={[
-                                styles.wave,
-                                {
-                                  transform: [{ scale: waveAnim2 }],
-                                  opacity: waveAnim2.interpolate({
-                                    inputRange: [0, 3],
-                                    outputRange: [0.7, 0],
-                                  }),
-                                },
-                              ]}
-                            />
-                            <Animated.View
-                              style={[
-                                styles.wave,
-                                {
-                                  transform: [{ scale: waveAnim3 }],
-                                  opacity: waveAnim3.interpolate({
-                                    inputRange: [0, 3],
-                                    outputRange: [0.7, 0],
-                                  }),
-                                },
-                              ]}
-                            />
-                          </>
-                        )}
+                    ))}
 
-                        {/* 麦克风图标 - 完全复用 RecordingModal 的样式 */}
-                        <Animated.View
+                    {images.length < maxImages && (
+                      <TouchableOpacity
+                        style={[
+                          styles.addButton,
+                          (images.length + 1) % 4 === 0 &&
+                            styles.imageWrapperLastInRow, // 每行最后一个
+                        ]}
+                        onPress={handleAddMore}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="add" size={28} color="#D96F4C" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* ✅ 显示之前输入的文字内容 - 紧接着图片预览，设置 paddingTop: 20 */}
+                  {isRecordingMode && textContent.trim() && !isProcessing && (
+                    <View style={styles.textPreviewContainer}>
+                      <Text
+                        style={[
+                          styles.textPreviewTitle,
+                          {
+                            fontFamily: getFontFamilyForText(
+                              t("createImageDiary.textPreview"),
+                              "semibold"
+                            ),
+                          },
+                        ]}
+                      >
+                        {t("createImageDiary.textPreview")}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.textPreviewText,
+                          {
+                            fontFamily: getFontFamilyForText(
+                              textContent,
+                              "regular"
+                            ),
+                          },
+                        ]}
+                        numberOfLines={3}
+                        ellipsizeMode="tail"
+                      >
+                        {textContent}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* 文字输入框 - 默认显示（当有图片且非录音模式时） */}
+                  {images.length > 0 && !isRecordingMode && (
+                    <>
+                      <View style={styles.inputContainer}>
+                        <TextInput
                           style={[
-                            styles.iconContainer,
+                            styles.textInput,
                             {
-                              transform: [{ scale: pulseAnim }],
+                              fontFamily: getFontFamilyForText(
+                                textContent,
+                                "regular"
+                              ),
+                            },
+                          ]}
+                          placeholder={t("createImageDiary.textPlaceholder")}
+                          placeholderTextColor="#999"
+                          value={textContent}
+                          onChangeText={setTextContent}
+                          multiline
+                          maxLength={500}
+                          textAlignVertical="top"
+                          accessibilityLabel={t(
+                            "createImageDiary.textPlaceholder"
+                          )}
+                          accessibilityHint={t("accessibility.input.textHint")}
+                          accessibilityRole="text"
+                        />
+                        <Text
+                          style={[
+                            styles.charCount,
+                            textContent.length > 0 &&
+                              textContent.length < 10 &&
+                              styles.charCountWarning,
+                            {
+                              fontFamily: getFontFamilyForText(
+                                `${textContent.length}/500`,
+                                "regular"
+                              ),
                             },
                           ]}
                         >
-                          <Ionicons
-                            name={isPaused ? "pause" : "mic"}
-                            size={44}
-                            color="#E56C45"
-                          />
-                        </Animated.View>
-
-                        {/* 状态文字 - 完全复用 RecordingModal 的样式 */}
-                        <Text style={styles.recordingStatusText}>
-                          {isPaused
-                            ? t("diary.pauseRecording")
-                            : nearLimit
-                            ? t("recording.nearLimit")
-                            : ""}
+                          {textContent.length}/500
                         </Text>
+                      </View>
 
-                        {/* 时间显示 - 完全复用 RecordingModal 的样式 */}
-                        <View style={styles.timeRow}>
-                          <Text style={styles.durationText}>
-                            {formatTime(recordingDuration)}
-                          </Text>
-                          <Text style={styles.maxDuration}> / 10:00</Text>
-                        </View>
-                      </>
-                    )}
-                  </View>
+                      {/* 完成按钮 - 放在输入框正下面 */}
+                      <TouchableOpacity
+                        style={styles.completeButton}
+                        onPress={handleSave}
+                        disabled={isProcessing}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.completeButtonText,
+                            {
+                              fontFamily: getFontFamilyForText(
+                                isProcessing || isSaving
+                                  ? t("common.saving")
+                                  : t("createImageDiary.submitButton"),
+                                "semibold"
+                              ),
+                            },
+                          ]}
+                        >
+                          {isProcessing || isSaving
+                            ? t("common.saving")
+                            : t("createImageDiary.submitButton")}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </>
               )}
             </ScrollView>
           </KeyboardAvoidingView>
 
-          {/* ✅ 录音控制按钮 - 放在 ScrollView 外面，靠近底部（录音模式时显示） */}
-          {isRecordingMode && images.length > 0 && (
-            <View style={styles.recordingControls}>
-              {isProcessing ? (
-                <View style={{ height: 72 }} />
-              ) : (
+          {/* ✅ 统一的处理加载Modal */}
+          {isProcessing && images.length > 0 && (
+            <ProcessingModal
+              visible={isProcessing}
+              processingStep={processingStep}
+              processingProgress={processingProgress}
+              steps={processingSteps.map((step) => ({
+                icon: step.icon,
+                text: step.text,
+              }))}
+            />
+          )}
+
+          {/* ✅ 录音模式时，显示底部面板 */}
+          {!isProcessing && isRecordingMode && images.length > 0 && (
+            <View style={styles.recordingOverlay}>
+              {/* 录音动画区域 - 只在录音模式时显示 */}
+              <View style={styles.recordingAnimationArea}>
                 <>
+                  {/* 录音波纹动画 */}
+                  {isRecording && !isPaused && (
+                    <>
+                      <Animated.View
+                        style={[
+                          styles.wave,
+                          {
+                            transform: [{ scale: waveAnim1 }],
+                            opacity: waveAnim1.interpolate({
+                              inputRange: [0, 3],
+                              outputRange: [0.7, 0],
+                            }),
+                          },
+                        ]}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.wave,
+                          {
+                            transform: [{ scale: waveAnim2 }],
+                            opacity: waveAnim2.interpolate({
+                              inputRange: [0, 3],
+                              outputRange: [0.7, 0],
+                            }),
+                          },
+                        ]}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.wave,
+                          {
+                            transform: [{ scale: waveAnim3 }],
+                            opacity: waveAnim3.interpolate({
+                              inputRange: [0, 3],
+                              outputRange: [0.7, 0],
+                            }),
+                          },
+                        ]}
+                      />
+                    </>
+                  )}
+
+                  {/* 麦克风图标 */}
+                  <Animated.View
+                    style={[
+                      styles.iconContainer,
+                      { transform: [{ scale: pulseAnim }] },
+                    ]}
+                  >
+                    <Ionicons
+                      name={isPaused ? "pause" : "mic"}
+                      size={44}
+                      color="#E56C45"
+                    />
+                  </Animated.View>
+
+                  {/* 状态文字 */}
+                  <Text
+                    style={[
+                      styles.recordingStatusText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          isPaused
+                            ? t("diary.pauseRecording")
+                            : nearLimit
+                            ? t("recording.nearLimit")
+                            : "",
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
+                    {isPaused
+                      ? t("diary.pauseRecording")
+                      : nearLimit
+                      ? t("recording.nearLimit")
+                      : ""}
+                  </Text>
+
+                  {/* 时间显示 */}
+                  <View style={styles.timeRow}>
+                    <Text
+                      style={[
+                        styles.durationText,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            formatTime(recordingDuration),
+                            "regular"
+                          ),
+                        },
+                      ]}
+                    >
+                      {formatTime(recordingDuration)}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.maxDuration,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            " / 10:00",
+                            "regular"
+                          ),
+                        },
+                      ]}
+                    >
+                      {" / 10:00"}
+                    </Text>
+                  </View>
+                </>
+              </View>
+
+              {/* 录音控制按钮 */}
+              {!isProcessing && (
+                <View style={styles.recordingControls}>
                   <TouchableOpacity
                     style={styles.cancelButton}
-                    onPress={cancelRecording}
+                    onPress={handleCancelRecording}
                     accessibilityLabel={t("common.cancel")}
                     accessibilityHint={t("accessibility.button.cancelHint")}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.cancelText}>{t("common.cancel")}</Text>
+                    <Text
+                      style={[
+                        styles.cancelText,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            t("common.cancel"),
+                            "regular"
+                          ),
+                        },
+                      ]}
+                    >
+                      {t("common.cancel")}
+                    </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1159,9 +1798,21 @@ export default function ImageDiaryModal({
                     accessibilityHint={t("accessibility.button.continueHint")}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.finishText}>{t("common.done")}</Text>
+                    <Text
+                      style={[
+                        styles.finishText,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            t("common.done"),
+                            "semibold"
+                          ),
+                        },
+                      ]}
+                    >
+                      {t("common.done")}
+                    </Text>
                   </TouchableOpacity>
-                </>
+                </View>
               )}
             </View>
           )}
@@ -1171,10 +1822,43 @@ export default function ImageDiaryModal({
             <View style={styles.bottomToolbar}>
               <TouchableOpacity
                 style={styles.toolbarRecordButton}
-                onPress={() => {
+                onPress={async () => {
                   // ✅ 进入录音模式
-                  setIsRecordingMode(true);
-                  startRecording();
+                  try {
+                    setIsRecordingMode(true);
+
+                    // ✅ 关键修复1：先停止并清理所有音频播放器
+                    if (resultSoundRef.current) {
+                      try {
+                        await resultSoundRef.current.stopAsync();
+                        await resultSoundRef.current.unloadAsync();
+                      } catch (error) {
+                        console.log("清理音频播放器时出错（可忽略）:", error);
+                      }
+                      resultSoundRef.current = null;
+                      setIsPlayingResult(false);
+                    }
+
+                    // ✅ 关键修复2：先取消之前的录音，确保录音对象被完全清理
+                    try {
+                      await cancelRecording();
+                    } catch (error) {
+                      console.log("取消之前的录音时出错（可忽略）:", error);
+                    }
+
+                    // ✅ 关键修复3：增加等待时间，确保音频系统完全准备好
+                    // 先等待 200ms 让音频播放器完全停止
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+                    // 再等待 100ms 让音频系统完全重置
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+
+                    // ✅ 现在可以安全地开始录音
+                    await startRecording();
+                  } catch (error) {
+                    console.error("启动录音失败:", error);
+                    Alert.alert("错误", "启动录音失败，请重试");
+                    setIsRecordingMode(false);
+                  }
                 }}
                 activeOpacity={0.8}
               >
@@ -1210,7 +1894,17 @@ export default function ImageDiaryModal({
                   </TouchableOpacity>
 
                   {/* 去掉标题，直接显示鼓励性文案 */}
-                  <Text style={styles.confirmMessage}>
+                  <Text
+                    style={[
+                      styles.confirmMessage,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          t("createImageDiary.confirmMessage"),
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
                     {t("createImageDiary.confirmMessage")}
                   </Text>
 
@@ -1222,12 +1916,22 @@ export default function ImageDiaryModal({
                       ]}
                       onPress={() => {
                         setShowConfirmModal(false);
-                        doSave();
+                        doSaveImageOnly(); // ✅ 纯图片直接保存
                       }}
                       accessibilityLabel={t("createImageDiary.saveAsIs")}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.confirmButtonTextSecondary}>
+                      <Text
+                        style={[
+                          styles.confirmButtonTextSecondary,
+                          {
+                            fontFamily: getFontFamilyForText(
+                              t("createImageDiary.saveAsIs"),
+                              "regular"
+                            ),
+                          },
+                        ]}
+                      >
                         {t("createImageDiary.saveAsIs")}
                       </Text>
                     </TouchableOpacity>
@@ -1244,7 +1948,17 @@ export default function ImageDiaryModal({
                       accessibilityLabel={t("createImageDiary.addContent")}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.confirmButtonTextPrimary}>
+                      <Text
+                        style={[
+                          styles.confirmButtonTextPrimary,
+                          {
+                            fontFamily: getFontFamilyForText(
+                              t("createImageDiary.addContent"),
+                              "semibold"
+                            ),
+                          },
+                        ]}
+                      >
                         {t("createImageDiary.addContent")}
                       </Text>
                     </TouchableOpacity>
@@ -1253,6 +1967,14 @@ export default function ImageDiaryModal({
               </TouchableOpacity>
             </TouchableOpacity>
           </Modal>
+        )}
+        {/* Toast 提示 - 使用全屏容器确保居中 */}
+        {toastVisible && (
+          <View style={styles.toastOverlay} pointerEvents="none">
+            <View style={styles.toastContainer}>
+              <Text style={styles.toastText}>{toastMessage}</Text>
+            </View>
+          </View>
         )}
       </View>
     </Modal>
@@ -1311,10 +2033,26 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24, // ✅ 与 RecordingModal 保持一致（从 20 调整为 24）
+    borderTopRightRadius: 24, // ✅ 与 RecordingModal 保持一致（从 20 调整为 24）
+    paddingBottom: 40, // ✅ 与 TextInputModal 和 RecordingModal 保持一致
+  },
+  // ✅ 输入状态：最大高度（键盘弹出时充分利用屏幕）
+  modalInput: {
     height: SCREEN_HEIGHT - 80,
-    //paddingTop: 20,
+    maxHeight: SCREEN_HEIGHT - 80,
+  },
+  // ✅ 加载状态：固定高度（与语音处理保持一致）
+  modalProcessing: {
+    height: 640,
+    minHeight: 640,
+    maxHeight: 640,
+  },
+  // ✅ 结果状态：根据内容动态调整（最小高度640，最大不超过屏幕高度）
+  modalResult: {
+    minHeight: 640,
+    maxHeight: SCREEN_HEIGHT - 80,
+    // 不设置固定 height，让内容决定高度
   },
   // Header 样式 - 与 TextInputModal 保持一致
   header: {
@@ -1357,7 +2095,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "flex-start",
     paddingTop: 24,
-    marginBottom: 16,
+    marginBottom: 0, // ✅ 调整为0，与textPreviewContainer的marginTop配合，总间距为20px
   },
   // 文字输入框样式 - 与 TextInputModal 保持一致
   inputContainer: {
@@ -1533,7 +2271,8 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 60,
+    paddingVertical: 60, // ✅ 与 RecordingModal 的 animationArea 保持一致
+    width: "100%",
   },
   processingCenter: {
     alignItems: "center",
@@ -1609,11 +2348,12 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: "#666",
     marginBottom: 8,
-    marginTop: 140, // ✅ 添加上边距,避开波纹区域
+    marginTop: 140, // ✅ 与 RecordingModal 的 statusText 保持一致，避开波纹区域
   },
   timeRow: {
     flexDirection: "row",
     alignItems: "baseline", // 对齐基线
+    // ✅ 与 RecordingModal 保持一致，不需要额外的 marginTop
   },
   durationText: {
     ...Typography.sectionTitle,
@@ -1630,8 +2370,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 40,
-    paddingTop: 20,
-    paddingBottom: 48,
+    paddingTop: 20, // ✅ 与 RecordingModal 的 controls 保持一致
+    width: "100%",
   },
   cancelButton: {
     padding: 20,
@@ -1659,5 +2399,215 @@ const styles = StyleSheet.create({
   finishText: {
     ...Typography.body,
     color: "#E56C45",
+  },
+  textPreviewContainer: {
+    backgroundColor: "rgba(250, 246, 237, 0.95)", // ✅ 半透明背景
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12, // ✅ 缩小与图片缩略图的间距，与页边距（20px）视觉上接近
+    marginBottom: 0,
+    // ✅ 去掉 marginHorizontal，与输入框保持一致（都使用 scrollContent 的 paddingHorizontal: 20）
+    width: "auto", // ✅ 自动宽度
+    maxHeight: 100,
+    alignSelf: "stretch", // ✅ 确保宽度填满
+  },
+  textPreviewTitle: {
+    fontSize: 12,
+    color: "#999",
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+  textPreviewText: {
+    ...Typography.body,
+    fontSize: 14,
+    color: "#666",
+    lineHeight: 20,
+  },
+  recordingOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "transparent", // ✅ 改为透明，去掉白色背景重叠
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: Platform.OS === "ios" ? 40 : 20,
+    paddingHorizontal: 20,
+    zIndex: 100,
+    alignItems: "center",
+    justifyContent: "center", // ✅ 与 RecordingModal 保持一致
+    flex: 1, // ✅ 确保占满可用空间
+  },
+  textPreviewContent: {
+    width: "100%",
+  },
+  // ✅ 加载Modal样式
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingContent: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 32,
+    width: "80%",
+    maxWidth: 300,
+    alignItems: "center",
+  },
+  // ===== Toast（统一样式，与RecordingModal和列表删除一致）=====
+  toastOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  toastContainer: {
+    backgroundColor: "rgba(0,0,0,0.75)",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 120,
+    maxWidth: "80%",
+  },
+  toastText: {
+    ...Typography.caption,
+    color: "#fff",
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  // ===== 结果预览视图样式 =====
+  resultScrollView: {
+    flex: 1,
+  },
+  resultScrollContent: {
+    paddingBottom: 20, // ✅ 与 RecordingModal 保持一致
+    paddingHorizontal: 20,
+  },
+  resultImageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  resultImageWrapper: {
+    width: THUMBNAIL_SIZE,
+    height: THUMBNAIL_SIZE,
+    marginRight: 8,
+    marginBottom: 8,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  resultImageWrapperLastInRow: {
+    marginRight: 0,
+  },
+  resultThumbnail: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  resultAudioPlayer: {
+    marginTop: 4, // ✅ 进一步缩小间距，让图片和语音更紧凑
+    marginBottom: 12,
+  },
+  resultDiaryCard: {
+    backgroundColor: "#FAF6ED",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  resultTitleText: {
+    ...Typography.diaryTitle,
+    fontSize: 18,
+    color: "#1A1A1A",
+    letterSpacing: -0.5,
+    marginBottom: 12,
+  },
+  resultContentText: {
+    ...Typography.body,
+    lineHeight: 26,
+    color: "#1A1A1A",
+    letterSpacing: 0.2,
+  },
+  resultFeedbackCard: {
+    backgroundColor: "#F8F9FA",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  resultFeedbackHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  resultFeedbackTitle: {
+    ...Typography.sectionTitle,
+    fontSize: 16,
+    color: "#E56C45",
+    marginLeft: 6,
+  },
+  resultFeedbackText: {
+    ...Typography.body,
+    fontSize: 15,
+    lineHeight: 28, // ✅ 增大行高，让中文内容不那么密集（从22增加到28）
+    letterSpacing: 0.3, // ✅ 增加字间距，让阅读更舒适
+    color: "#1A1A1A",
+  },
+  resultBottomBar: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#F0F0F0",
+    backgroundColor: "#fff",
+  },
+  saveButton: {
+    backgroundColor: "#E56C45",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    shadowColor: "#E56C45",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  saveButtonText: {
+    ...Typography.body,
+    color: "#fff",
+    fontWeight: "600",
+  },
+  editTitleInput: {
+    ...Typography.diaryTitle,
+    color: "#1A1A1A",
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E56C45",
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: "#fff",
+  },
+  editContentInput: {
+    ...Typography.body,
+    color: "#1A1A1A",
+    borderWidth: 1,
+    borderColor: "#E56C45",
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: "#fff",
+    minHeight: 200,
+    maxHeight: 400,
+    textAlignVertical: "top",
   },
 });

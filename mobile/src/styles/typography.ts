@@ -32,12 +32,14 @@ const FONT_NAMES = {
     regular: "Lora_400Regular",
     medium: "Lora_500Medium",
     semibold: "Lora_600SemiBold",
+    bold: "Lora_700Bold",
   },
   // Noto Serif SC 字体（中文）
   notoSerifSC: {
     regular: "NotoSerifSC_400Regular",
     medium: "NotoSerifSC_500Medium",
     semibold: "NotoSerifSC_600SemiBold",
+    bold: "NotoSerifSC_700Bold",
   },
 } as const;
 
@@ -76,11 +78,21 @@ export function detectTextLanguage(text: string): "zh" | "en" {
  * @param weight 字重 'regular' | 'medium' | 'semibold'
  * @returns 字体名称
  */
+/**
+ * 根据语言和字重获取字体名称
+ *
+ * @param language 语言代码 'zh' | 'en'
+ * @param weight 字重 'regular' | 'medium' | 'semibold'
+ * @returns 字体名称
+ */
 export function getFontFamily(
-  language: "zh" | "en" = getCurrentLocale() as "zh" | "en",
-  weight: "regular" | "medium" | "semibold" = "regular"
+  language: string = getCurrentLocale(),
+  weight: "regular" | "medium" | "semibold" | "bold" = "regular"
 ): string {
-  if (language === "zh") {
+  // 统一处理语言代码，支持 zh-CN, zh-TW 等
+  const normalizedLang = language.toLowerCase().startsWith("zh") ? "zh" : "en";
+
+  if (normalizedLang === "zh") {
     return FONT_NAMES.notoSerifSC[weight];
   } else {
     return FONT_NAMES.lora[weight];
@@ -98,7 +110,7 @@ export function getFontFamily(
  */
 export function getFontFamilyForText(
   text: string,
-  weight: "regular" | "medium" | "semibold" = "regular"
+  weight: "regular" | "medium" | "semibold" | "bold" = "regular"
 ): string {
   const language = detectTextLanguage(text);
   return getFontFamily(language, weight);
@@ -119,65 +131,52 @@ export const FontWeight = {
  * 这个函数会根据当前界面语言（locale）自动选择对应的字体：
  * - 中文界面：使用 Noto Serif SC
  * - 英文界面：使用 Lora
- *
- * 💡 为什么用函数而不是对象？
- * - Typography 需要动态响应语言切换
- * - 每次调用都会获取最新的 locale，确保字体正确
  */
-function getTypography(): {
+function getTypographyStyles(): {
   body: TextStyle;
   diaryTitle: TextStyle;
   sectionTitle: TextStyle;
   caption: TextStyle;
 } {
   const currentLocale = getCurrentLocale();
-  const isChinese = currentLocale === "zh";
+  const isChinese = currentLocale.toLowerCase().startsWith("zh");
 
   // 根据语言选择字体和字间距
-  // 中文：Noto Serif SC，字间距稍大（中文衬线字体特性）
-  // 英文：Lora，字间距正常（英文衬线字体特性）
   const bodyFont = isChinese ? "NotoSerifSC_400Regular" : "Lora_400Regular";
-  const titleFont = isChinese ? "NotoSerifSC_600SemiBold" : "Lora_600SemiBold";
+  const titleFont = isChinese ? "NotoSerifSC_700Bold" : "Lora_600SemiBold"; // ✅ 中文使用 Bold
   const sectionFont = isChinese ? "NotoSerifSC_500Medium" : "Lora_500Medium";
 
-  // 字间距调整：中文需要稍大的字间距，英文使用默认
-  const bodyLetterSpacing = isChinese ? 0.2 : 0;
+  // 字间距调整
+  const bodyLetterSpacing = isChinese ? 0.5 : 0; // ✅ 中文字间距增加
   const titleLetterSpacing = isChinese ? -0.3 : 0;
   const sectionLetterSpacing = isChinese ? -0.2 : 0;
   const captionLetterSpacing = isChinese ? 0.3 : 0.2;
 
+  // ✅ 中文优化：字号与英文保持一致，行高适中
+  const bodyFontSize = isChinese ? 16 : 16; // ✅ 中文字号从 14 增加到 16，提升可读性
+  const bodyLineHeight = isChinese ? 28 : 24; // ✅ 中文行高 28px，保持合适的行高比例
+  const titleFontSize = isChinese ? 18 : 20; // 中文标题字号减小 2px
+  const titleLineHeight = isChinese ? 26 : 24; // 中文标题行高增加
+
   return {
-    /**
-     * 正文样式 - Regular 400
-     * 用于：日记内容、描述文本、普通段落
-     * 自动根据语言选择字体：中文用 Noto Serif SC，英文用 Lora
-     */
     body: {
       fontFamily: bodyFont,
       fontWeight: FontWeight.REGULAR,
-      fontSize: 16,
-      lineHeight: 24,
+      fontSize: bodyFontSize,
+      lineHeight: bodyLineHeight,
       letterSpacing: bodyLetterSpacing,
     } as TextStyle,
 
-    /**
-     * 日记标题样式 - SemiBold 600
-     * 用于：日记卡片标题、详情页标题
-     * 自动根据语言选择字体，保持优雅的视觉层次
-     */
     diaryTitle: {
       fontFamily: titleFont,
-      fontWeight: FontWeight.SEMIBOLD,
-      fontSize: 20,
-      lineHeight: 24,
+      fontWeight: isChinese
+        ? ("700" as TextStyle["fontWeight"])
+        : FontWeight.SEMIBOLD,
+      fontSize: titleFontSize,
+      lineHeight: titleLineHeight,
       letterSpacing: titleLetterSpacing,
     } as TextStyle,
 
-    /**
-     * Section标题样式 - Medium 500
-     * 用于："我的日记"、"我想对你说"等章节标题
-     * 自动根据语言选择字体，层次分明且优雅
-     */
     sectionTitle: {
       fontFamily: sectionFont,
       fontWeight: FontWeight.MEDIUM,
@@ -186,11 +185,6 @@ function getTypography(): {
       letterSpacing: sectionLetterSpacing,
     } as TextStyle,
 
-    /**
-     * 小标题样式 - Regular 400
-     * 用于：日期、时间、标签等辅助信息
-     * 自动根据语言选择字体，保持与正文一致的风格
-     */
     caption: {
       fontFamily: bodyFont,
       fontWeight: FontWeight.REGULAR,
@@ -202,29 +196,26 @@ function getTypography(): {
 }
 
 /**
- * Typography 样式对象（向后兼容）
+ * Typography 样式对象
  *
- * ⚠️ 注意：这个对象在模块加载时确定，不会响应语言切换
- * 如果你的组件需要在运行时响应语言变化，请使用 getTypography() 函数
- *
- * 对于大多数场景，这个对象就足够了，因为：
- * - 界面语言切换时会重新渲染组件
- * - 组件重新渲染时会重新计算样式
+ * 使用 getter 确保每次访问都能获取到基于当前语言的最新样式
  */
-export const Typography = getTypography();
+export const Typography = {
+  get body() {
+    return getTypographyStyles().body;
+  },
+  get diaryTitle() {
+    return getTypographyStyles().diaryTitle;
+  },
+  get sectionTitle() {
+    return getTypographyStyles().sectionTitle;
+  },
+  get caption() {
+    return getTypographyStyles().caption;
+  },
+};
 
 /**
  * 获取当前语言的 Typography（推荐使用）
- *
- * 这个函数会返回基于当前语言的样式，确保字体正确
- *
- * @example
- * ```tsx
- * import { getTypography } from '@/styles/typography';
- *
- * const styles = StyleSheet.create({
- *   text: getTypography().body,
- * });
- * ```
  */
-export { getTypography };
+export const getTypography = getTypographyStyles;

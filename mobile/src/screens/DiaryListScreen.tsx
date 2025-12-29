@@ -11,7 +11,12 @@ import ImageInputIcon from "../assets/icons/addImageIcon.svg";
 import TextInputIcon from "../assets/icons/textInputIcon.svg";
 import EmptyStateIcon from "../assets/icons/empty-state.svg";
 import AppIconHomepage from "../assets/icons/app-icon-homepage.svg";
-import { Typography, getTypography } from "../styles/typography";
+import {
+  Typography,
+  getTypography,
+  getFontFamilyForText,
+  detectTextLanguage, // ✅ 新增
+} from "../styles/typography";
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -89,6 +94,7 @@ interface Diary {
   ai_feedback: string;
   audio_url?: string; // 音频文件URL
   audio_duration?: number; // 音频时长（秒）
+  image_urls?: string[]; // ✅ 新增：图片URL数组
 }
 
 /**
@@ -1054,7 +1060,19 @@ export default function DiaryListScreen() {
                 color="#333"
                 style={styles.actionIcon}
               />
-              <Text style={styles.actionText}>{t("home.copyEntry")}</Text>
+              <Text
+                style={[
+                  styles.actionText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("home.copyEntry"),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
+                {t("home.copyEntry")}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1067,7 +1085,18 @@ export default function DiaryListScreen() {
                 color="#FF3B30"
                 style={styles.actionIcon}
               />
-              <Text style={[styles.actionText, styles.deleteText]}>
+              <Text
+                style={[
+                  styles.actionText,
+                  styles.deleteText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.delete"),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
                 {t("common.delete")}
               </Text>
             </TouchableOpacity>
@@ -1077,7 +1106,19 @@ export default function DiaryListScreen() {
               style={styles.cancelButton}
               onPress={() => setActionSheetVisible(false)}
             >
-              <Text style={styles.cancelText}>{t("common.cancel")}</Text>
+              <Text
+                style={[
+                  styles.cancelText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.cancel"),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
+                {t("common.cancel")}
+              </Text>
             </TouchableOpacity>
           </Animated.View>
         </View>
@@ -1162,7 +1203,18 @@ export default function DiaryListScreen() {
             accessibilityRole="button"
           >
             <Ionicons name="mail-outline" size={20} color="#332824" />
-            <Text style={[styles.profileMenuItemText, typography.body]}>
+            <Text
+              style={[
+                styles.profileMenuItemText,
+                typography.body,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("home.supportFeedback"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("home.supportFeedback")}
             </Text>
           </TouchableOpacity>
@@ -1180,7 +1232,18 @@ export default function DiaryListScreen() {
               size={20}
               color="#332824"
             />
-            <Text style={[styles.profileMenuItemText, typography.body]}>
+            <Text
+              style={[
+                styles.profileMenuItemText,
+                typography.body,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("home.privacyPolicy"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("home.privacyPolicy")}
             </Text>
           </TouchableOpacity>
@@ -1194,7 +1257,18 @@ export default function DiaryListScreen() {
             accessibilityRole="button"
           >
             <Ionicons name="document-text-outline" size={20} color="#332824" />
-            <Text style={[styles.profileMenuItemText, typography.body]}>
+            <Text
+              style={[
+                styles.profileMenuItemText,
+                typography.body,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("home.termsOfService"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("home.termsOfService")}
             </Text>
           </TouchableOpacity>
@@ -1213,7 +1287,18 @@ export default function DiaryListScreen() {
             accessibilityState={{ busy: isDeletingAccount }}
           >
             <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-            <Text style={[styles.profileMenuItemTextDanger, typography.body]}>
+            <Text
+              style={[
+                styles.profileMenuItemTextDanger,
+                typography.body,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("home.deleteAccount"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("home.deleteAccount")}
             </Text>
             {isDeletingAccount && (
@@ -1234,7 +1319,18 @@ export default function DiaryListScreen() {
             accessibilityRole="button"
           >
             <Ionicons name="log-out-outline" size={20} color="#332824" />
-            <Text style={[styles.profileMenuItemText, typography.body]}>
+            <Text
+              style={[
+                styles.profileMenuItemText,
+                typography.body,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("home.signOut"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("home.signOut")}
             </Text>
           </TouchableOpacity>
@@ -1276,10 +1372,32 @@ export default function DiaryListScreen() {
                       {parts.map((part, index) => (
                         <React.Fragment key={index}>
                           {part && (
-                            <Text style={styles.greetingBold}>{part}</Text>
+                            <Text
+                              style={[
+                                styles.greetingBold,
+                                {
+                                  fontFamily: getFontFamilyForText(
+                                    part,
+                                    "bold"
+                                  ),
+                                },
+                              ]}
+                            >
+                              {part}
+                            </Text>
                           )}
                           {index < parts.length - 1 && (
-                            <Text style={styles.greetingBoldHighlight}>
+                            <Text
+                              style={[
+                                styles.greetingBoldHighlight,
+                                {
+                                  fontFamily: getFontFamilyForText(
+                                    userDisplayName,
+                                    "bold"
+                                  ),
+                                },
+                              ]}
+                            >
                               {userDisplayName}
                             </Text>
                           )}
@@ -1289,11 +1407,29 @@ export default function DiaryListScreen() {
                   );
                 })()
               ) : (
-                <Text style={styles.greetingBold}>{greetingWelcome}</Text>
+                <Text
+                  style={[
+                    styles.greetingBold,
+                    {
+                      fontFamily: getFontFamilyForText(greetingWelcome, "bold"),
+                    },
+                  ]}
+                >
+                  {greetingWelcome}
+                </Text>
               )}
             </View>
           </View>
-          <Text style={styles.greetingLight}>{greetingSubtitle}</Text>
+          <Text
+            style={[
+              styles.greetingLight,
+              {
+                fontFamily: getFontFamilyForText(greetingSubtitle, "regular"),
+              },
+            ]}
+          >
+            {greetingSubtitle}
+          </Text>
         </View>
 
         {/* 用户头像按钮 */}
@@ -1322,7 +1458,16 @@ export default function DiaryListScreen() {
 
       {/* 我的日记标题 - 仅在列表不为空时显示 */}
       {diaries.length > 0 && (
-        <Text style={styles.sectionTitle}>{t("home.myDiary")}</Text>
+        <Text
+          style={[
+            styles.sectionTitle,
+            {
+              fontFamily: getFontFamilyForText(t("home.myDiary"), "medium"),
+            },
+          ]}
+        >
+          {t("home.myDiary")}
+        </Text>
       )}
     </View>
   );
@@ -1354,77 +1499,217 @@ export default function DiaryListScreen() {
       item.title || "图片日记"
     }`;
 
+    // ✅ 动态计算字体（确保中文内容使用 Noto Serif SC Bold）
+    const isChineseTitle = detectTextLanguage(item.title || "") === "zh";
+    const titleFontFamily = getFontFamilyForText(
+      item.title || "",
+      isChineseTitle ? "bold" : "semibold"
+    );
+    const contentText = isImageOnly
+      ? ""
+      : item.polished_content || item.original_content;
+    const isChineseContent = detectTextLanguage(contentText) === "zh";
+    const contentFontFamily = getFontFamilyForText(contentText, "regular");
+
     return (
       <TouchableOpacity
         style={styles.diaryCard}
         onPress={() => handleDiaryPress(item)}
         activeOpacity={0.7}
+        // 添加无障碍属性
         accessibilityLabel={accessibilityLabel}
-        accessibilityHint={t("accessibility.list.cardHint")}
+        accessibilityHint={t("accessibility.button.viewDetailHint")}
         accessibilityRole="button"
       >
-        {/* 纯图片日记：只显示图片，不显示标题和内容 */}
+        {/* 纯图片日记：只显示图片 */}
         {isImageOnly ? (
           <>
             {/* 图片缩略图 */}
             {item.image_urls && item.image_urls.length > 0 && (
-              <View style={styles.imageGrid}>
-                {item.image_urls.slice(0, 3).map((url, index) => (
-                  <Image
-                    key={index}
-                    source={{ uri: url }}
-                    style={styles.imageThumbnail}
-                    resizeMode="cover"
-                  />
-                ))}
-                {item.image_urls.length > 3 && (
-                  <View style={[styles.imageThumbnail, styles.moreBadge]}>
-                    <Text style={styles.moreText}>
-                      +{item.image_urls.length - 3}
-                    </Text>
-                  </View>
-                )}
+              <View
+                style={[
+                  styles.imageGrid,
+                  { marginTop: 8 }, // ✅ 增加顶部间距
+                ]}
+              >
+                {(() => {
+                  // ✅ 动态计算列数：<=3张用3列，>3张用4列
+                  const numColumns = item.image_urls.length > 3 ? 4 : 3;
+                  const gap = 8;
+                  const padding = 40; // card padding (20*2)
+                  const screenWidth = Dimensions.get("window").width;
+                  const availableWidth = screenWidth - padding - 40; // 40 is list padding
+                  // 计算图片宽度：(总宽度 - (列数-1)*间距) / 列数
+                  const imageSize =
+                    (availableWidth - (numColumns - 1) * gap) / numColumns;
+
+                  // 决定显示多少张图片
+                  const maxItems = numColumns;
+                  const shouldShowBadge = item.image_urls.length > maxItems;
+                  const displayCount = shouldShowBadge
+                    ? maxItems - 1
+                    : item.image_urls.length;
+
+                  return (
+                    <>
+                      {item.image_urls
+                        .slice(0, displayCount)
+                        .map((url, index) => (
+                          <Image
+                            key={index}
+                            source={{ uri: url }}
+                            style={{
+                              width: imageSize,
+                              height: imageSize,
+                              borderRadius: 8,
+                              backgroundColor: "#f0f0f0",
+                            }}
+                            resizeMode="cover"
+                          />
+                        ))}
+                      {shouldShowBadge && (
+                        <View
+                          style={[
+                            styles.moreBadge,
+                            {
+                              width: imageSize,
+                              height: imageSize,
+                              borderRadius: 8,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.moreText,
+                              {
+                                fontFamily: getFontFamilyForText(
+                                  `+${item.image_urls.length - displayCount}`,
+                                  "regular"
+                                ),
+                              },
+                            ]}
+                          >
+                            +{item.image_urls.length - displayCount}
+                          </Text>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
               </View>
             )}
           </>
         ) : (
           <>
-            {/* AI生成的标题 */}
+            {/* 标题 */}
             {item.title && item.title.trim() !== "" && (
-              <Text style={styles.cardTitle} numberOfLines={2}>
+              <Text
+                style={[
+                  styles.cardTitle,
+                  {
+                    fontFamily: titleFontFamily,
+                    fontWeight: isChineseTitle ? "700" : "600",
+                    fontSize: isChineseTitle ? 18 : 20,
+                    lineHeight: isChineseTitle ? 26 : 24,
+                  },
+                ]}
+                numberOfLines={2}
+              >
                 {item.title}
               </Text>
             )}
 
-            {/* 日记内容 */}
-            {item.polished_content && item.polished_content.trim() !== "" && (
+            {/* 内容预览 */}
+            {contentText && contentText.trim() !== "" && (
               <Text
-                style={styles.cardContent}
+                style={[
+                  styles.cardContent,
+                  {
+                    fontFamily: contentFontFamily,
+                    fontSize: isChineseContent ? 16 : 16, // ✅ 中文字号从 14 增加到 16
+                    lineHeight: isChineseContent ? 28 : 24, // ✅ 中文行高 28px
+                  },
+                ]}
                 numberOfLines={3}
-                ellipsizeMode="tail"
               >
-                {item.polished_content}
+                {contentText}
               </Text>
             )}
 
             {/* 图片缩略图（如果有） */}
             {item.image_urls && item.image_urls.length > 0 && (
-              <View style={styles.imageGrid}>
-                {item.image_urls.slice(0, 3).map((url, index) => (
-                  <Image
-                    key={index}
-                    source={{ uri: url }}
-                    style={styles.imageThumbnail}
-                    resizeMode="cover"
-                  />
-                ))}
-                {item.image_urls.length > 3 && (
-                  <View style={[styles.imageThumbnail, styles.moreBadge]}>
-                    <Text style={styles.moreText}>
-                      +{item.image_urls.length - 3}
-                    </Text>
-                  </View>
-                )}
+              <View
+                style={[
+                  styles.imageGrid,
+                  { marginTop: 8 }, // ✅ 增加顶部间距
+                ]}
+              >
+                {(() => {
+                  // ✅ 动态计算列数：<=3张用3列，>3张用4列
+                  const numColumns = item.image_urls.length > 3 ? 4 : 3;
+                  const gap = 8;
+                  const padding = 40; // card padding (20*2)
+                  const screenWidth = Dimensions.get("window").width;
+                  const availableWidth = screenWidth - padding - 40; // 40 is list padding
+                  // 计算图片宽度：(总宽度 - (列数-1)*间距) / 列数
+                  const imageSize =
+                    (availableWidth - (numColumns - 1) * gap) / numColumns;
+
+                  // 决定显示多少张图片
+                  // 如果图片数量 > 列数，显示 numColumns 张（最后一张可能是 +N）
+                  // 否则显示所有图片
+                  const maxItems = numColumns;
+                  const shouldShowBadge = item.image_urls.length > maxItems;
+                  const displayCount = shouldShowBadge
+                    ? maxItems - 1
+                    : item.image_urls.length;
+
+                  return (
+                    <>
+                      {item.image_urls
+                        .slice(0, displayCount)
+                        .map((url, index) => (
+                          <Image
+                            key={index}
+                            source={{ uri: url }}
+                            style={{
+                              width: imageSize,
+                              height: imageSize,
+                              borderRadius: 8,
+                              backgroundColor: "#f0f0f0",
+                            }}
+                            resizeMode="cover"
+                          />
+                        ))}
+                      {shouldShowBadge && (
+                        <View
+                          style={[
+                            styles.moreBadge,
+                            {
+                              width: imageSize,
+                              height: imageSize,
+                              borderRadius: 8,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.moreText,
+                              {
+                                fontFamily: getFontFamilyForText(
+                                  `+${item.image_urls.length - displayCount}`,
+                                  "regular"
+                                ),
+                              },
+                            ]}
+                          >
+                            +{item.image_urls.length - displayCount}
+                          </Text>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
               </View>
             )}
           </>
@@ -1447,7 +1732,16 @@ export default function DiaryListScreen() {
         {/* 日期 + 三点菜单图标 - 移到底部 */}
         <View style={styles.cardFooter}>
           <View style={styles.dateContainer}>
-            <Text style={styles.cardDate}>{displayDate}</Text>
+            <Text
+              style={[
+                styles.cardDate,
+                {
+                  fontFamily: getFontFamilyForText(displayDate, "regular"),
+                },
+              ]}
+            >
+              {displayDate}
+            </Text>
           </View>
 
           {/* 三点菜单图标 */}
@@ -1523,7 +1817,16 @@ export default function DiaryListScreen() {
       <View style={styles.emptyIconContainer}>
         <EmptyStateIcon width={120} height={120} />
       </View>
-      <Text style={styles.emptyText}>{t("home.noDiaries")}</Text>
+      <Text
+        style={[
+          styles.emptyText,
+          {
+            fontFamily: getFontFamilyForText(t("home.noDiaries"), "regular"),
+          },
+        ]}
+      >
+        {t("home.noDiaries")}
+      </Text>
     </View>
   );
 
@@ -1652,18 +1955,12 @@ export default function DiaryListScreen() {
         onClose={() => setImageDiaryModalVisible(false)}
         onSuccess={() => {
           setImageDiaryModalVisible(false);
-          loadDiaries(); // 刷新日记列表
+          loadDiaries(); // ✅ 统一刷新日记列表
         }}
         maxImages={9}
         onAddImage={() => {
           // 在 ImageDiaryModal 内部已经处理了添加图片的逻辑
           // 这里可以留空，或者添加额外的逻辑
-        }}
-        onAddVoice={(imageUrls) => {
-          // ✅ 保存图片URL列表，然后打开语音Modal
-          setImageUrlsForVoice(imageUrls);
-          setImageDiaryModalVisible(false);
-          setRecordingModalVisible(true);
         }}
         onAddText={() => {
           setImageDiaryModalVisible(false);
@@ -1691,7 +1988,16 @@ export default function DiaryListScreen() {
       {Platform.OS === "ios" && toastVisible && (
         <View style={styles.toastOverlay} pointerEvents="none">
           <View style={styles.toastContainer}>
-            <Text style={styles.toastText}>{toastMessage}</Text>
+            <Text
+              style={[
+                styles.toastText,
+                {
+                  fontFamily: getFontFamilyForText(toastMessage, "regular"),
+                },
+              ]}
+            >
+              {toastMessage}
+            </Text>
           </View>
         </View>
       )}
@@ -1857,6 +2163,15 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     marginHorizontal: 20,
     marginBottom: 12,
+    // ✅ 自然轻盈的弥散投影
+    shadowColor: "#FFEDE0",
+    shadowOffset: {
+      width: 0,
+      height: 4, // 轻微向下偏移，营造自然浮起感
+    },
+    shadowOpacity: 1, // 半透明，保持轻盈感
+    shadowRadius: 10, // 较大的模糊半径，营造弥散效果
+    elevation: 3, // Android 阴影（数值较小，保持轻盈）
   },
 
   cardFooter: {
@@ -1899,6 +2214,7 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: "#1A1A1A",
     marginBottom: 4, // 减少底部间距，避免内容不足3行时出现多余空白
+    textAlign: "left", // ✅ 左对齐，改善中文标点符号显示
   },
 
   // 图片网格样式

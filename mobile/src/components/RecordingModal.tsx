@@ -10,9 +10,11 @@ import { ActivityIndicator } from "react-native";
 import { Audio } from "expo-av";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { Alert } from "react-native";
+import { useVoiceRecording } from "../hooks/useVoiceRecording";
 import {
   createVoiceDiary,
   createVoiceDiaryStream,
+  deleteDiary,
   ProgressCallback,
 } from "../services/diaryService";
 import { updateDiary } from "../services/diaryService";
@@ -45,13 +47,15 @@ const { width } = Dimensions.get("window");
 // 🌍 导入翻译函数
 // ============================================================================
 import { t, getCurrentLocale } from "../i18n";
-import { Typography } from "../styles/typography";
+import { Typography, getFontFamilyForText } from "../styles/typography";
+import ProcessingModal from "./ProcessingModal";
 
 interface RecordingModalProps {
   visible: boolean;
   onSuccess: () => void; // ✅ 录音成功后回调
   onCancel: () => void; // ✅ 取消录音回调
   onDiscard?: () => void; // ✅ 删除未保存日记后回调
+  imageUrls?: string[]; // ✅ 新增：图片URL列表
 }
 
 export default function RecordingModal({
@@ -59,6 +63,7 @@ export default function RecordingModal({
   onSuccess,
   onCancel,
   onDiscard,
+  imageUrls,
 }: RecordingModalProps) {
   const KEEP_AWAKE_TAG = "recording-modal-session";
 
@@ -68,12 +73,21 @@ export default function RecordingModal({
   const waveAnim2 = useRef(new Animated.Value(0)).current;
   const waveAnim3 = useRef(new Animated.Value(0)).current;
 
-  // ✅ 录音状态管理
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [duration, setDuration] = useState(0);
+  // ✅ 使用自定义 Hook 管理录音逻辑
+  const {
+    isRecording,
+    isPaused,
+    duration,
+    isStarting,
+    nearLimit,
+    startRecording,
+    pauseRecording,
+    resumeRecording,
+    stopRecording,
+    cancelRecording,
+  } = useVoiceRecording();
+
   const [isProcessing, setIsProcessing] = useState(false);
-  const [nearLimit, setNearLimit] = useState(false); // 9分钟预警状态
 
   // ✅ 新增:处理步骤状态
   const [processingStep, setProcessingStep] = useState(0);
@@ -83,7 +97,7 @@ export default function RecordingModal({
   const [targetProgress, setTargetProgress] = useState(0);
 
   // ✅ 新增:平滑动画定时器
-  const progressAnimationRef = useRef<NodeJS.Timeout | null>(null);
+  const progressAnimationRef = useRef<{ cancel: () => void } | null>(null);
 
   // ✅ 优化步骤时长：更合理的分配，减少卡顿
   // 🎯 策略：前面的步骤稍快，后面的步骤稍慢，总体更流畅
@@ -259,37 +273,6 @@ export default function RecordingModal({
    * - 录音时保持音频会话在后台活跃
    * - 结束后及时恢复，避免占用系统资源
    */
-  const configureRecordingAudioMode = useCallback(async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: 2, // DoNotMix
-        interruptionModeAndroid: 1, // DoNotMix
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error("配置录音音频模式失败:", error);
-    }
-  }, []);
-
-  const resetAudioModeAsync = useCallback(async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        interruptionModeIOS: 2, // DoNotMix
-        interruptionModeAndroid: 1, // DoNotMix
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error("恢复音频模式失败:", error);
-    }
-  }, []);
 
   // ✅ 轻量 Toast（与删除成功保持一致样式）
   const [toastVisible, setToastVisible] = useState(false);
@@ -443,77 +426,63 @@ export default function RecordingModal({
   // 提前声明，供手势回调使用
   async function handleCancelRecording() {
     try {
-      let shouldDelete = false;
-      // 如果结果已生成但用户未保存，删除后端临时日记
+      // ✅ 如果结果已生成但用户未保存，弹出确认对话框
       if (showResult && pendingDiaryId && !hasSavedPendingDiary) {
-        try {
-          console.log("🗑️ 用户取消，删除未保存日记:", pendingDiaryId);
-          await deleteDiaryApi(pendingDiaryId);
-          shouldDelete = true;
-        } catch (deleteError) {
-          console.log("⚠️ 删除未保存日记失败（可忽略）:", deleteError);
-        }
+        Alert.alert(
+          t("confirm.discardUnsavedTitle"),
+          t("confirm.discardUnsavedMessage"),
+          [
+            {
+              text: t("common.cancel"),
+              style: "cancel",
+            },
+            {
+              text: t("common.confirm"),
+              style: "destructive",
+              onPress: async () => {
+                try {
+                  console.log("🗑️ 用户确认放弃，删除未保存日记:", pendingDiaryId);
+                  await deleteDiary(pendingDiaryId);
+                  setPendingDiaryId(null);
+                  setHasSavedPendingDiary(false);
+                  await cancelRecording();
+                  setIsProcessing(false);
+                  setShowResult(false);
+                  setResultDiary(null);
+                  onCancel();
+                  onDiscard?.();
+                } catch (deleteError) {
+                  console.log("⚠️ 删除未保存日记失败（可忽略）:", deleteError);
+                  // 即使删除失败，也继续关闭
+                  setPendingDiaryId(null);
+                  setHasSavedPendingDiary(false);
+                  await cancelRecording();
+                  setIsProcessing(false);
+                  setShowResult(false);
+                  setResultDiary(null);
+                  onCancel();
+                  onDiscard?.();
+                }
+              },
+            },
+          ]
+        );
+        return; // 等待用户确认
       }
 
+      // ✅ 如果没有结果或已保存，直接取消
       setPendingDiaryId(null);
       setHasSavedPendingDiary(false);
-
-      // ✅ 安全地清理录音对象
-      if (recordingRef.current) {
-        try {
-          const status = await recordingRef.current.getStatusAsync();
-          // 只有当录音对象还存在时才卸载
-          if (
-            status.canRecord ||
-            status.isRecording ||
-            status.isDoneRecording
-          ) {
-            await recordingRef.current.stopAndUnloadAsync();
-          }
-        } catch (e) {
-          console.log("清理录音对象时出错(可忽略):", e);
-        }
-        recordingRef.current = null;
-      }
-
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      // ✅ 重置所有状态
-      setIsRecording(false);
-      setIsPaused(false);
-      setDuration(0);
+      await cancelRecording();
       setIsProcessing(false);
       setShowResult(false);
       setResultDiary(null);
-      setNearLimit(false);
-      isStartingRef.current = false;
-      hasShown9MinWarning.current = false;
-      startedAtRef.current = null;
-
       console.log("❌ 录音已取消");
-      await resetAudioModeAsync();
-      try {
-        await deactivateKeepAwake(KEEP_AWAKE_TAG);
-      } catch (_) {}
       onCancel();
-      if (shouldDelete) {
-        onDiscard?.();
-      }
     } catch (error) {
       console.error("取消录音失败:", error);
       // ✅ 即使出错也要重置状态
-      recordingRef.current = null;
-      setIsRecording(false);
-      setIsPaused(false);
-      setDuration(0);
-      isStartingRef.current = false;
-      await resetAudioModeAsync();
-      try {
-        await deactivateKeepAwake(KEEP_AWAKE_TAG);
-      } catch (_) {}
+      setIsProcessing(false);
       onCancel();
     }
   }
@@ -522,7 +491,7 @@ export default function RecordingModal({
   // ✅ 新的手势 API
   const panGesture = Gesture.Pan()
     .onUpdate((event) => {
-      // 只允许向下拖动
+      // 只允许向下拖动（结果页时也允许，但会触发确认）
       if (event.translationY > 0) {
         dragY.setValue(event.translationY);
       }
@@ -530,23 +499,36 @@ export default function RecordingModal({
     .onEnd((event) => {
       // 拖动距离超过100px 或 快速向下滑动
       if (event.translationY > 100 || event.velocityY > 500) {
-        // 关闭 Modal
-        Animated.parallel([
-          Animated.timing(overlayOpacity, {
+        // ✅ 如果结果页，需要确认；否则直接关闭
+        if (showResult) {
+          // 弹回原位，然后触发确认对话框
+          Animated.spring(dragY, {
             toValue: 0,
-            duration: 200,
+            damping: 20,
+            stiffness: 300,
             useNativeDriver: true,
-          }),
-          Animated.timing(dragY, {
-            toValue: 300,
-            duration: 200,
-            easing: Easing.in(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          handleCancelRecording();
-          dragY.setValue(0);
-        });
+          }).start(() => {
+            handleCancelRecording();
+          });
+        } else {
+          // 关闭 Modal
+          Animated.parallel([
+            Animated.timing(overlayOpacity, {
+              toValue: 0,
+              duration: 200,
+              useNativeDriver: true,
+            }),
+            Animated.timing(dragY, {
+              toValue: 300,
+              duration: 200,
+              easing: Easing.in(Easing.ease),
+              useNativeDriver: true,
+            }),
+          ]).start(() => {
+            handleCancelRecording();
+            dragY.setValue(0);
+          });
+        }
       } else {
         // 弹回原位
         Animated.spring(dragY, {
@@ -567,7 +549,7 @@ export default function RecordingModal({
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [visible]);
+  }, [visible, isRecording, isProcessing, showResult]);
 
   // ✅ 录音时保持屏幕常亮，防止自动锁屏导致录音中断
   useEffect(() => {
@@ -599,7 +581,7 @@ export default function RecordingModal({
       (async () => {
         try {
           console.log("🗑️ Modal 关闭，清理未保存日记:", pendingDiaryId);
-          await deleteDiaryApi(pendingDiaryId);
+          await deleteDiary(pendingDiaryId);
           onDiscard?.();
         } catch (error) {
           console.log("⚠️ 关闭时删除未保存日记失败:", error);
@@ -616,12 +598,6 @@ export default function RecordingModal({
     return () => {
       (async () => {
         try {
-          if (recordingRef.current) {
-            await recordingRef.current.stopAndUnloadAsync();
-          }
-          if (durationIntervalRef.current) {
-            clearInterval(durationIntervalRef.current);
-          }
           // ✅ 新增:清理结果页音频
           if (resultSoundRef.current) {
             await resultSoundRef.current.unloadAsync();
@@ -633,293 +609,27 @@ export default function RecordingModal({
             clearInterval(resultProgressIntervalRef.current);
             resultProgressIntervalRef.current = null;
           }
-
-          await resetAudioModeAsync();
-          try {
-            await deactivateKeepAwake(KEEP_AWAKE_TAG);
-          } catch (_) {}
         } catch (_) {}
       })();
 
       if (progressAnimationRef.current) {
-        clearInterval(progressAnimationRef.current);
+        progressAnimationRef.current.cancel();
         progressAnimationRef.current = null;
       }
     };
   }, []);
 
   // ========== 录音相关函数 ==========
-
   /**
-   * 请求录音权限
-   */
-  const requestAudioPermission = async () => {
-    try {
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) {
-        Alert.alert(
-          t("error.audioPermissionDenied"),
-          t("error.audioPermissionMessage")
-        );
-        return false;
-      }
-      return true;
-    } catch (error) {
-      console.error("请求权限失败:", error);
-      return false;
-    }
-  };
-
-  /**
-   * 开始录音
-   */
-  const startRecording = async () => {
-    if (isStartingRef.current) return;
-    isStartingRef.current = true;
-
-    try {
-      // 清理之前的录音对象
-      if (recordingRef.current) {
-        try {
-          await recordingRef.current.stopAndUnloadAsync();
-        } catch (_) {}
-        recordingRef.current = null;
-      }
-
-      // 清理定时器
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      const hasPermission = await requestAudioPermission();
-      if (!hasPermission) {
-        onCancel();
-        return;
-      }
-
-      await configureRecordingAudioMode();
-
-      console.log("🎤 开始录音...");
-      const { recording: newRecording } = await Audio.Recording.createAsync({
-        android: {
-          extension: ".m4a",
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 44100,
-          numberOfChannels: 2,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: ".m4a",
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 44100,
-          numberOfChannels: 2,
-          bitRate: 128000,
-          linearPCMBitDepth: 16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat: false,
-        },
-        web: {
-          mimeType: "audio/webm",
-          bitsPerSecond: 128000,
-        },
-      });
-
-      recordingRef.current = newRecording;
-      setIsRecording(true);
-      setIsPaused(false);
-      setDuration(0);
-      setNearLimit(false);
-      hasShown9MinWarning.current = false;
-      startedAtRef.current = Date.now();
-
-      // 开始计时
-      const interval = setInterval(async () => {
-        try {
-          if (recordingRef.current) {
-            const status = await recordingRef.current.getStatusAsync();
-            if (status.isRecording) {
-              const seconds = Math.floor(status.durationMillis / 1000);
-              setDuration(seconds);
-
-              // ✅ 9分钟预警（还剩1分钟）
-              if (seconds >= 540 && !hasShown9MinWarning.current) {
-                hasShown9MinWarning.current = true;
-                setNearLimit(true);
-
-                // 轻触反馈（iOS）
-                if (Platform.OS === "ios") {
-                  try {
-                    const Haptics = await import("expo-haptics");
-                    await Haptics.default.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Medium
-                    );
-                  } catch (e) {
-                    console.log("Haptics 不可用:", e);
-                  }
-                }
-              }
-
-              // ✅ 10分钟自动停止
-              if (seconds >= 600) {
-                setNearLimit(false);
-                await handleFinishRecording();
-              }
-            }
-          }
-        } catch (error) {
-          console.error("获取录音状态失败:", error);
-        }
-      }, 1000);
-
-      durationIntervalRef.current = interval;
-    } catch (error) {
-      console.error("❌ 录音失败:", error);
-      Alert.alert(t("error.genericError"), t("error.recordingFailed"));
-      onCancel();
-    } finally {
-      isStartingRef.current = false;
-    }
-  };
-
-  /**
-   * 暂停录音
-   */
-  const handlePauseRecording = async () => {
-    if (!recordingRef.current) return;
-
-    try {
-      const status = await recordingRef.current.getStatusAsync();
-      if (!status.isRecording) {
-        console.log("录音未在进行中");
-        return;
-      }
-
-      await recordingRef.current.pauseAsync();
-      setIsPaused(true);
-
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      console.log("⏸ 录音已暂停");
-    } catch (error) {
-      console.error("暂停失败:", error);
-    }
-  };
-
-  /**
-   * 继续录音
-   */
-  const handleResumeRecording = async () => {
-    if (!recordingRef.current) return;
-
-    try {
-      const status = await recordingRef.current.getStatusAsync();
-
-      if (status.isRecording) {
-        console.log("录音已在进行中");
-        return;
-      }
-
-      if (status.isDoneRecording) {
-        console.log("录音已完成，无法继续");
-        return;
-      }
-
-      await configureRecordingAudioMode();
-      await recordingRef.current.startAsync();
-      setIsPaused(false);
-
-      // 重启定时器
-      const interval = setInterval(async () => {
-        try {
-          if (recordingRef.current) {
-            const status = await recordingRef.current.getStatusAsync();
-            if (status.isRecording) {
-              const seconds = Math.floor(status.durationMillis / 1000);
-              setDuration(seconds);
-
-              // ✅ 9分钟预警（还剩1分钟）
-              if (seconds >= 540 && !hasShown9MinWarning.current) {
-                hasShown9MinWarning.current = true;
-                setNearLimit(true);
-
-                // 轻触反馈（iOS）
-                if (Platform.OS === "ios") {
-                  try {
-                    const Haptics = await import("expo-haptics");
-                    await Haptics.default.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Medium
-                    );
-                  } catch (e) {
-                    console.log("Haptics 不可用:", e);
-                  }
-                }
-              }
-
-              // ✅ 10分钟自动停止
-              if (seconds >= 600) {
-                setNearLimit(false);
-                await handleFinishRecording();
-              }
-            }
-          }
-        } catch (error) {
-          console.error("获取录音状态失败:", error);
-        }
-      }, 1000);
-
-      durationIntervalRef.current = interval;
-
-      console.log("▶️ 继续录音");
-    } catch (error) {
-      console.error("恢复录音失败:", error);
-    }
-  };
-
-  /**
-   * 完成录音
+   * 完成录音并开始处理
    */
   const handleFinishRecording = async () => {
-    if (!recordingRef.current) {
-      console.log("录音对象不存在");
-      return;
-    }
-
     try {
-      console.log("✅ 完成录音");
-
-      // 获取URI
-      const uri = recordingRef.current.getURI();
-      console.log("录音文件URI:", uri);
-
-      // 清理定时器
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
-
-      // 停止录音
-      await recordingRef.current.stopAndUnloadAsync();
-      recordingRef.current = null;
-      await resetAudioModeAsync();
-      try {
-        await deactivateKeepAwake(KEEP_AWAKE_TAG);
-      } catch (_) {}
-
-      const recordedDuration = Math.floor(duration);
-      console.log("录音时长:", recordedDuration, "秒");
+      const recordedDuration = duration;
+      const uri = await stopRecording();
 
       // ✅ 检查录音时长(最短3秒)
       if (recordedDuration < 3) {
-        setIsRecording(false);
-        setIsPaused(false);
-        setDuration(0);
-
         Alert.alert(t("confirm.hint"), t("diary.shortRecordingHint"), [
           {
             text: t("diary.resumeRecording"),
@@ -937,9 +647,6 @@ export default function RecordingModal({
 
       // 显示处理中
       setIsProcessing(true);
-      setIsRecording(false);
-      setIsPaused(false);
-      setDuration(0);
 
       // ✅ 重置进度状态（准备接收真实进度）
       setProcessingStep(0);
@@ -948,80 +655,42 @@ export default function RecordingModal({
       progressAnimValue.setValue(0); // ✅ 重置动画值，确保从 0 开始
 
       try {
-        // 📚 学习点：进度回调函数
-        // 这个函数会在后端处理过程中被多次调用
-        // 每次后端推送进度更新时，这个函数就会执行
         const progressCallback: ProgressCallback = (progressData) => {
           console.log("📊 收到进度更新:", progressData);
-
-          // ✅ 智能步骤匹配：根据进度百分比来确定步骤，而不是仅依赖后端step
-          // 这样确保文案与进度完全匹配
           const progress = progressData.progress;
-          let frontendStep = 0;
+          
+          // ✅ 使用后端返回的 step（pollTaskProgress 中已经映射好了）
+          // 后端 step 0-5 映射到前端 step 0-4
+          let frontendStep = progressData.step ?? 0;
 
-          // 根据进度百分比智能匹配步骤
-          if (progress < 20) {
-            // 0-20%: 上传音频
-            frontendStep = 0;
-          } else if (progress < 50) {
-            // 20-50%: 语音转文字
-            frontendStep = 1;
-          } else if (progress < 70) {
-            // 50-70%: AI润色
-            frontendStep = 2;
-          } else if (progress < 85) {
-            // 70-85%: 生成标题
-            frontendStep = 3;
-          } else {
-            // 85-100%: 生成反馈
-            frontendStep = 4;
-          }
+          // ✅ 确保步骤在有效范围内
+          frontendStep = Math.max(0, Math.min(frontendStep, processingSteps.length - 1));
 
-          // 确保索引在有效范围内
-          frontendStep = Math.max(
-            0,
-            Math.min(frontendStep, processingSteps.length - 1)
-          );
-
-          // 更新当前步骤
+          console.log(`📊 进度更新: step=${frontendStep}, progress=${progress}%, message=${progressData.message || progressData.step_name}`);
+          
           setProcessingStep(frontendStep);
-
-          // ✅ 平滑更新进度（自动计算动画时长，根据进度跳跃大小）
-          // 不指定duration，让函数自动根据进度差计算合适的动画时长
-          smoothUpdateProgress(progressData.progress);
+          smoothUpdateProgress(progress);
         };
 
-        // ✅ 使用轮询模式实现实时进度（专业方案）
-        // 后端创建任务并返回task_id，前端定期查询进度
-        // 这是跨平台兼容、稳定可靠的方案
         const diary = await createVoiceDiaryStream(
           uri!,
           recordedDuration,
-          progressCallback
+          progressCallback,
+          imageUrls // ✅ 传递图片URL
         );
-        console.log("✅ 后端返回成功");
 
-        console.log("✅ 日记创建成功:", diary);
-
-        // ✅ 显示结果预览页
         setIsProcessing(false);
         setResultDiary(diary);
         setShowResult(true);
         setPendingDiaryId(diary.diary_id);
         setHasSavedPendingDiary(false);
 
-        // 🔍 调试：打印完整的AI反馈
-        console.log("✅ 显示结果预览");
-        console.log("📊 AI反馈完整内容：");
-        console.log(`  长度: ${diary.ai_feedback?.length || 0} 字符`);
-        console.log(`  内容: "${diary.ai_feedback}"`);
-        console.log(`  标题: "${diary.title}"`);
+        console.log("✅ 日记创建成功:", diary.diary_id);
       } catch (error: any) {
         console.log("❌ 处理失败:", error);
         setPendingDiaryId(null);
         setHasSavedPendingDiary(false);
 
-        // ✅ 检查是否是空内容错误（EMPTY_TRANSCRIPT）
         if (
           error.code === "EMPTY_TRANSCRIPT" ||
           (error.message &&
@@ -1034,7 +703,6 @@ export default function RecordingModal({
               error.message.includes("检测到的内容只包含标点符号") ||
               error.message.includes("未能识别到任何语音内容")))
         ) {
-          // 空内容错误：只提供"重录"选项
           Alert.alert(
             t("error.emptyRecording.title"),
             t("error.emptyRecording.message"),
@@ -1048,11 +716,9 @@ export default function RecordingModal({
               },
             ]
           );
-          setToastVisible(false);
           return;
         }
 
-        // 其他错误
         let errorMessage = t("error.retryMessage");
         if (error.message) {
           errorMessage = error.message;
@@ -1072,7 +738,6 @@ export default function RecordingModal({
             onPress: () => onCancel(),
           },
         ]);
-        setToastVisible(false);
       }
     } catch (error) {
       console.log("完成录音失败:", error);
@@ -1171,7 +836,7 @@ export default function RecordingModal({
 
       // 停止之前的音频
       if (resultSoundRef.current) {
-        await resultSoundRef.current.unloadAsync();
+        await (resultSoundRef.current as any).unloadAsync();
         resultSoundRef.current = null;
       }
 
@@ -1334,7 +999,7 @@ export default function RecordingModal({
         resultProgressIntervalRef.current = null;
       }
 
-      // 重置所有状态
+      // ✅ 先重置所有状态，确保不会触发任何副作用
       setShowResult(false);
       setResultDiary(null);
       setIsPlayingResult(false);
@@ -1346,6 +1011,9 @@ export default function RecordingModal({
       setEditedTitle("");
       setEditedContent("");
       setHasChanges(false);
+      setIsProcessing(false);
+      setProcessingStep(0);
+      setProcessingProgress(0);
 
       // ✅ 显示成功 Toast
       showToast(t("success.diaryCreated"));
@@ -1353,8 +1021,11 @@ export default function RecordingModal({
       // ✅ 短暂延迟让用户看到 Toast
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // 通知父组件刷新列表
-      onSuccess();
+      // ✅ 通知父组件刷新列表（父组件会在 onSuccess 中关闭 modal）
+      // 使用 setTimeout 确保状态更新已完成
+      setTimeout(() => {
+        onSuccess();
+      }, 0);
     } catch (error: any) {
       console.error("❌ 保存失败:", error);
       Alert.alert(
@@ -1363,7 +1034,6 @@ export default function RecordingModal({
       );
     } finally {
       isSavingRef.current = false;
-      await resetAudioModeAsync();
       try {
         await deactivateKeepAwake(KEEP_AWAKE_TAG);
       } catch (_) {}
@@ -1452,57 +1122,25 @@ export default function RecordingModal({
         >
           <Ionicons name="close-outline" size={24} color="#666" />
         </TouchableOpacity>
-        <Text style={styles.title}>{t("diary.voiceEntry")}</Text>
+        <Text
+          style={[
+            styles.title,
+            {
+              fontFamily: getFontFamilyForText(
+                t("diary.voiceEntry"),
+                "medium"
+              ),
+            },
+          ]}
+        >
+          {t("diary.voiceEntry")}
+        </Text>
         <View style={styles.headerRight} />
       </View>
 
       {/* 录音动画区域 */}
       <View style={styles.animationArea}>
-        {isProcessing ? (
-          <View
-            style={styles.processingCenter}
-            accessibilityLiveRegion="polite"
-            accessibilityLabel={t("accessibility.status.processing", {
-              step: processingStep + 1,
-            })}
-          >
-            <View style={styles.processingContent}>
-              {/* Emoji - 单独一行，居中对齐 */}
-              <View style={styles.emojiContainer}>
-                <Text style={styles.stepEmoji}>
-                  {processingSteps[processingStep]?.icon}
-                </Text>
-              </View>
-
-              {/* 步骤文案 - 单独一行，居中对齐 */}
-              <View style={styles.textContainer}>
-                <Text style={styles.currentStepText}>
-                  {processingSteps[processingStep]?.text}
-                </Text>
-              </View>
-
-              {/* 进度条和百分比 */}
-              <View style={styles.progressSection}>
-                <View style={styles.progressBarBg}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      { width: `${processingProgress}%` },
-                    ]}
-                  />
-                </View>
-                <Text
-                  style={styles.progressText}
-                  accessibilityLabel={`${t(
-                    "accessibility.status.processing"
-                  )}, ${Math.round(processingProgress)}%`}
-                >
-                  {Math.round(processingProgress)}%
-                </Text>
-              </View>
-            </View>
-          </View>
-        ) : (
+        {!isProcessing && (
           <>
             {isRecording && !isPaused && (
               <>
@@ -1560,7 +1198,21 @@ export default function RecordingModal({
               />
             </Animated.View>
 
-            <Text style={styles.statusText}>
+            <Text
+              style={[
+                styles.statusText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    isPaused
+                      ? t("diary.pauseRecording")
+                      : nearLimit
+                      ? t("recording.nearLimit")
+                      : "",
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {isPaused
                 ? t("diary.pauseRecording")
                 : nearLimit
@@ -1569,8 +1221,29 @@ export default function RecordingModal({
             </Text>
 
             <View style={styles.timeRow}>
-              <Text style={styles.durationText}>{formatTime(duration)}</Text>
-              <Text style={styles.maxDuration}> / 10:00</Text>
+              <Text
+                style={[
+                  styles.durationText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      formatTime(duration),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
+                {formatTime(duration)}
+              </Text>
+              <Text
+                style={[
+                  styles.maxDuration,
+                  {
+                    fontFamily: getFontFamilyForText(" / 10:00", "regular"),
+                  },
+                ]}
+              >
+                {" / 10:00"}
+              </Text>
             </View>
           </>
         )}
@@ -1589,12 +1262,24 @@ export default function RecordingModal({
               accessibilityHint={t("accessibility.button.cancelHint")}
               accessibilityRole="button"
             >
-              <Text style={styles.cancelText}>{t("common.cancel")}</Text>
+              <Text
+                style={[
+                  styles.cancelText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.cancel"),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
+                {t("common.cancel")}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.pauseButton}
-              onPress={isPaused ? handleResumeRecording : handlePauseRecording}
+              onPress={isPaused ? resumeRecording : pauseRecording}
               accessibilityLabel={
                 isPaused
                   ? t("createVoiceDiary.resumeRecording")
@@ -1622,7 +1307,19 @@ export default function RecordingModal({
               accessibilityHint={t("accessibility.button.continueHint")}
               accessibilityRole="button"
             >
-              <Text style={styles.finishText}>{t("common.done")}</Text>
+              <Text
+                style={[
+                  styles.finishText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.done"),
+                      "semibold"
+                    ),
+                  },
+                ]}
+              >
+                {t("common.done")}
+              </Text>
             </TouchableOpacity>
           </>
         )}
@@ -1650,7 +1347,17 @@ export default function RecordingModal({
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           {isEditing ? (
-            <Text style={styles.resultHeaderButtonText}>
+            <Text
+              style={[
+                styles.resultHeaderButtonText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("common.cancel"),
+                    "regular"
+                  ),
+                },
+              ]}
+            >
               {t("common.cancel")}
             </Text>
           ) : (
@@ -1659,7 +1366,17 @@ export default function RecordingModal({
         </TouchableOpacity>
 
         {/* 中间标题 */}
-        <Text style={styles.resultHeaderTitle}>
+        <Text
+          style={[
+            styles.resultHeaderTitle,
+            {
+              fontFamily: getFontFamilyForText(
+                isEditing ? t("common.edit") : t("diary.yourEntry"),
+                "regular"
+              ),
+            },
+          ]}
+        >
           {isEditing ? t("common.edit") : t("diary.yourEntry")}
         </Text>
 
@@ -1677,6 +1394,12 @@ export default function RecordingModal({
               style={[
                 styles.resultHeaderButtonText,
                 styles.resultHeaderSaveText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("common.done"),
+                    "semibold"
+                  ),
+                },
               ]}
             >
               {t("common.done")}
@@ -1754,7 +1477,17 @@ export default function RecordingModal({
                   accessibilityHint={t("accessibility.button.editHint")}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.resultTitleText}>
+                  <Text
+                    style={[
+                      styles.resultTitleText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.title,
+                          "bold"
+                        ),
+                      },
+                    ]}
+                  >
                     {resultDiary.title}
                   </Text>
                 </TouchableOpacity>
@@ -1763,7 +1496,15 @@ export default function RecordingModal({
               {/* 内容 */}
               {isEditingContent ? (
                 <TextInput
-                  style={styles.editContentInput}
+                  style={[
+                    styles.editContentInput,
+                    {
+                      fontFamily: getFontFamilyForText(
+                        editedContent || resultDiary.polished_content,
+                        "regular"
+                      ),
+                    },
+                  ]}
                   value={editedContent}
                   onChangeText={(text) => {
                     setEditedContent(text);
@@ -1789,7 +1530,17 @@ export default function RecordingModal({
                   accessibilityHint={t("accessibility.button.editHint")}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.resultContentText}>
+                  <Text
+                    style={[
+                      styles.resultContentText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.polished_content,
+                          "regular"
+                        ),
+                      },
+                    ]}
+                  >
                     {resultDiary.polished_content}
                   </Text>
                 </TouchableOpacity>
@@ -1803,12 +1554,30 @@ export default function RecordingModal({
                 <View style={styles.resultFeedbackCard}>
                   <View style={styles.resultFeedbackHeader}>
                     <Ionicons name="sparkles" size={18} color="#E56C45" />
-                    <Text style={styles.resultFeedbackTitle}>
+                    <Text
+                      style={[
+                        styles.resultFeedbackTitle,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            t("diary.aiFeedbackTitle"),
+                            "medium"
+                          ),
+                        },
+                      ]}
+                    >
                       {t("diary.aiFeedbackTitle")}
                     </Text>
                   </View>
                   <Text
-                    style={styles.resultFeedbackText}
+                    style={[
+                      styles.resultFeedbackText,
+                      {
+                        fontFamily: getFontFamilyForText(
+                          resultDiary.ai_feedback,
+                          "regular"
+                        ),
+                      },
+                    ]}
                     numberOfLines={0}
                     ellipsizeMode="clip"
                   >
@@ -1831,7 +1600,17 @@ export default function RecordingModal({
             accessibilityHint={t("accessibility.button.saveHint")}
             accessibilityRole="button"
           >
-            <Text style={styles.saveButtonText}>
+            <Text
+              style={[
+                styles.saveButtonText,
+                {
+                  fontFamily: getFontFamilyForText(
+                    t("diary.saveToJournal"),
+                    "semibold"
+                  ),
+                },
+              ]}
+            >
               {t("diary.saveToJournal")}
             </Text>
           </TouchableOpacity>
@@ -1846,7 +1625,7 @@ export default function RecordingModal({
         visible={visible}
         transparent
         animationType="none"
-        onRequestClose={onCancel}
+        onRequestClose={showResult ? handleCancelRecording : onCancel}
       >
         <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
           <TouchableOpacity
@@ -1871,13 +1650,38 @@ export default function RecordingModal({
               {toastVisible && (
                 <View style={styles.toastOverlay} pointerEvents="none">
                   <View style={styles.toastContainer}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
+                    <Text
+                      style={[
+                        styles.toastText,
+                        {
+                          fontFamily: getFontFamilyForText(
+                            toastMessage,
+                            "regular"
+                          ),
+                        },
+                      ]}
+                    >
+                      {toastMessage}
+                    </Text>
                   </View>
                 </View>
               )}
             </Animated.View>
           </GestureDetector>
         </Animated.View>
+
+        {/* ✅ 统一的处理加载Modal（覆盖整个屏幕） */}
+        {isProcessing && (
+          <ProcessingModal
+            visible={isProcessing}
+            processingStep={processingStep}
+            processingProgress={processingProgress}
+            steps={processingSteps.map((step) => ({
+              icon: step.icon,
+              text: step.text,
+            }))}
+          />
+        )}
       </Modal>
     </GestureHandlerRootView>
   );
@@ -2050,7 +1854,8 @@ const styles = StyleSheet.create({
   resultFeedbackText: {
     ...Typography.body,
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 28, // ✅ 增大行高，让中文内容不那么密集（从22增加到28）
+    letterSpacing: 0.3, // ✅ 增加字间距，让阅读更舒适
     color: "#1A1A1A",
   },
   resultBottomBar: {

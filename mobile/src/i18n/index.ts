@@ -106,12 +106,22 @@ export const t = (key: string, options?: any): string => {
     // 如果 i18n-js 找不到键，会返回 "[missing xxx]" 格式
     // 我们需要检查这种情况并返回空字符串或默认值
     if (result && result.startsWith("[missing")) {
-      console.warn(`⚠️ 翻译键未找到: ${key}`, result);
+      // ✅ 只在开发环境显示警告，避免生产环境的噪音
+      if (__DEV__) {
+        console.warn(`⚠️ 翻译键未找到: ${key}`, result);
+      }
+      // ✅ 尝试从默认语言获取（fallback）
+      const fallbackResult = i18n.t(key, { locale: i18n.defaultLocale, ...options });
+      if (fallbackResult && !fallbackResult.startsWith("[missing")) {
+        return fallbackResult;
+      }
       return "";
     }
     return result;
   } catch (error) {
-    console.error(`❌ 翻译失败: ${key}`, error);
+    if (__DEV__) {
+      console.error(`❌ 翻译失败: ${key}`, error);
+    }
     return "";
   }
 };

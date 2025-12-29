@@ -203,6 +203,7 @@ export default {
     confirmMessage: "Add words or voice to capture how you feel in this moment",
     saveAsIs: "Save as is",
     addContent: "Add content",
+    textPreview: "Entered Text",
   },
 
   // 日记通用（创建后的结果页面）
@@ -242,6 +243,11 @@ export default {
       polish: "Polishing your words...",
       title: "Finding the right title...",
       feedback: "Writing a note back to you...",
+      // ✅ Image + Text specific steps (no voice-related steps)
+      uploadImages: "Uploading images...",
+      polishText: "Polishing your words...",
+      generateTitle: "Finding the right title...",
+      generateFeedback: "Writing a note back to you...",
     },
   },
 
@@ -301,6 +307,8 @@ export default {
     deleteTitle: "Confirm Delete",
     deleteMessage:
       "Are you sure you want to delete this entry? This action cannot be undone.",
+    discardUnsavedTitle: "Discard Unsaved Entry?",
+    discardUnsavedMessage: "This action cannot be undone.",
     cancelRecordingTitle: "Cancel Recording",
     cancelRecordingMessage:
       "Are you sure you want to cancel? Your recording will be lost.",
@@ -390,6 +398,7 @@ export default {
       supportHint: "Double tap to email support@thankly.app",
       privacyHint: "Double tap to open the privacy policy",
       deleteAccountHint: "Double tap to permanently delete your account",
+      viewDetailHint: "Double tap to view diary details", // ✅ 新增
     },
     // 列表和导航
     list: {

@@ -608,10 +608,9 @@ export default function LoginScreen() {
             isLoading={loading && loadingProvider === "username"}
           />
 
-          {/* 分隔线 */}
           <View style={styles.separator}>
             <View style={styles.separatorLine} />
-            <Text style={styles.separatorText}>OR</Text>
+            <Text style={[styles.separatorText, typography.sectionTitle]}>OR</Text>
             <View style={styles.separatorLine} />
           </View>
 
@@ -729,7 +728,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     fontSize: 14,
     color: "#332824",
-    fontFamily: "Lora_500Medium", // 使用 Lora Medium 字体
+    // ✅ Font will be applied via Typography in component
   },
   input: {
     width: "100%",
