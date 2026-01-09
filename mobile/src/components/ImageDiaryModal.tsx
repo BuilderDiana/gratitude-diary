@@ -49,7 +49,9 @@ import { t } from "../i18n";
 import ProcessingModal from "./ProcessingModal";
 import VoiceRecordingPanel from "./VoiceRecordingPanel";
 import AudioPlayer from "./AudioPlayer";
+import { EmotionCapsule } from "./EmotionCapsule";
 import { Typography, getFontFamilyForText } from "../styles/typography";
+import DiaryResultView from "./DiaryResultView"; // ✅ 导入共享组件
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 // 4列布局：左右padding 20*2=40，3个间距 8*3=6，尽可能填满宽度，不留多余空白
@@ -418,65 +420,30 @@ export default function ImageDiaryModal({
 
   const doSaveWithAI = async () => {
     setIsProcessing(true);
-    setProcessingStep(0); // ✅ 重置步骤为0（上传图片步骤）
+    setProcessingStep(0);
     setProcessingProgress(0);
     currentProgressRef.current = 0;
     progressAnimValue.setValue(0);
 
     try {
-      // ✅ 优化：图片上传和AI处理并行执行
-      // 图片不参与AI处理（已去掉Vision模型），所以可以并行，缩短总时间
-      console.log("📤 启动图片上传（与AI处理并行）...");
-      const imageUploadPromise = uploadDiaryImages(images).catch(
-        (error: any) => {
-          console.error("❌ 图片上传失败:", error);
-          throw error;
-        }
-      );
-
-      // ✅ 模拟AI处理进度（图片+文字场景专用）
-      // 步骤：上传图片(0-25%) -> 润色文字(25-50%) -> 生成标题(50-75%) -> 生成反馈(75-100%)
-      // 注意：此函数专门用于图片+文字场景，不包含语音相关步骤
-      const simulateProgress = () => {
-        let currentStep = 0;
-        // ✅ 使用图片+文字专用步骤配置（不包含语音相关步骤）
-        const steps = imageTextProcessingSteps.map((step, index) => ({
-          step: index,
-          progress: step.progress,
-          text: step.text,
-        }));
-
-        const updateProgress = () => {
-          if (currentStep < steps.length) {
-            const stepInfo = steps[currentStep];
-            // ✅ 确保步骤索引在 imageTextProcessingSteps 范围内（0-3）
-            setProcessingStep(stepInfo.step);
-            smoothUpdateProgress(stepInfo.progress);
-
-            if (currentStep < steps.length - 1) {
-              currentStep++;
-              // ✅ 优化延迟时间，让进度更自然
-              // 上传图片(300ms) -> 润色文字(800ms) -> 生成标题(1000ms) -> 生成反馈(800ms)
-              const delay =
-                currentStep === 1 ? 800 : currentStep === 2 ? 1000 : 800;
-              setTimeout(updateProgress, delay);
-            }
-          }
-        };
-
-        // 先更新到上传步骤
-        setTimeout(updateProgress, 300);
-      };
-
-      // ✅ 启动进度模拟
-      simulateProgress();
-
-      // ✅ 等待图片上传完成
-      const imageUrls = await imageUploadPromise;
+      console.log("📤 开始上传图片...");
+      
+      // ✅ 使用真实的上传进度回调：0-70%
+      setProcessingStep(0); // 上传图片步骤
+      const imageUrls = await uploadDiaryImages(images, (uploadProgress) => {
+        // 将上传进度映射到0-70%
+        const mappedProgress = Math.round(uploadProgress * 0.7);
+        console.log(`📊 真实上传进度: ${uploadProgress}% → 显示进度: ${mappedProgress}%`);
+        smoothUpdateProgress(mappedProgress);
+      });
+      
+      // 上传完成，立即更新到70%
       console.log("✅ 图片上传完成，URLs:", imageUrls);
+      setProcessingStep(1); // 切换到AI处理步骤
+      smoothUpdateProgress(70);
 
-      // ✅ 调用后端API创建日记（AI处理在后端同步进行）
-      // 注意：后端已经去掉了Vision模型，只处理文字内容
+      // ✅ AI处理占70-100%
+      console.log("🤖 开始AI处理...");
       const diary = await createImageOnlyDiary(
         imageUrls,
         textContent.trim() || undefined
@@ -484,11 +451,14 @@ export default function ImageDiaryModal({
 
       console.log("✅ 图片+文字日记创建成功:", diary);
 
-      // ✅ 确保进度到100%（使用图片+文字步骤的最后一个索引）
+      // ✅ AI处理完成，平滑过渡到100%
       setProcessingStep(imageTextProcessingSteps.length - 1);
       smoothUpdateProgress(100);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      
+      // ✅ 等待进度动画完成后再显示结果 (smoothUpdateProgress(100) 的 duration 是 1000ms)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
+      // ✅ 显示结果
       setIsProcessing(false);
       setResultDiary(diary);
       setShowResult(true);
@@ -497,11 +467,7 @@ export default function ImageDiaryModal({
       setEditedTitle(diary.title);
       setEditedContent(diary.polished_content);
 
-      // ✅ 统一使用toast反馈
-      showToast(t("success.diaryCreated"));
-
-      // ✅ 短暂延迟让用户看到toast
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // ✅ 移除toast - 结果页已经足够明确，不需要额外提示
     } catch (error: any) {
       console.error("❌ 保存失败:", error);
       Alert.alert("保存失败", error.message || "请重试");
@@ -642,6 +608,9 @@ export default function ImageDiaryModal({
    * 完成录音并处理
    */
   const finishRecording = async () => {
+    // ✅ 添加组件卸载检测
+    let isMounted = true;
+
     try {
       console.log("✅ 完成录音");
 
@@ -689,8 +658,13 @@ export default function ImageDiaryModal({
         });
       }
 
-      // ✅ 进度回调
+      // ✅ 进度回调 - 添加组件卸载检测
       const progressCallback: ProgressCallback = (progressData) => {
+        if (!isMounted) {
+          console.log("⚠️ 组件已卸载,跳过进度更新");
+          return;
+        }
+
         const progress = progressData.progress;
         // ✅ 直接使用 pollTaskProgress 中已经映射好的 step（无需再次映射）
         // pollTaskProgress 已经将后端 step 0-5 正确映射到前端 step 0-4
@@ -722,6 +696,12 @@ export default function ImageDiaryModal({
         images.length > 0
       );
 
+      // ✅ 检查组件是否已卸载
+      if (!isMounted) {
+        console.log("⚠️ 组件已卸载,取消AI处理");
+        return;
+      }
+
       // ✅ 启动轮询（后台执行）
       const aiProcessPromise = pollTaskProgress(
         taskId,
@@ -734,6 +714,13 @@ export default function ImageDiaryModal({
       if (imageUploadPromise) {
         try {
           imageUrls = await imageUploadPromise;
+
+          // ✅ 检查组件是否已卸载
+          if (!isMounted) {
+            console.log("⚠️ 组件已卸载,取消补充图片");
+            return;
+          }
+
           console.log("✅ 图片上传完成，补充图片URL到任务...");
 
           // ✅ 补充图片URL到任务（AI处理还在进行中）
@@ -742,14 +729,31 @@ export default function ImageDiaryModal({
         } catch (error: any) {
           console.error("❌ 图片上传失败:", error);
           const errorMessage = error.message || "上传图片失败，请重试";
-          Alert.alert("错误", errorMessage);
-          setIsProcessing(false);
+
+          // ✅ 关键修复：图片上传失败时,正确清理状态
+          if (isMounted) {
+            setIsProcessing(false);
+            setIsRecordingMode(false);
+            Alert.alert("错误", errorMessage);
+          }
+
+          // ✅ 清理 Keep Awake
+          try {
+            deactivateKeepAwake();
+          } catch (_) {}
+
           return;
         }
       }
 
       // ✅ 等待AI处理完成（后端会在保存时等待图片URL）
       const diary = await aiProcessPromise;
+
+      // ✅ 检查组件是否已卸载
+      if (!isMounted) {
+        console.log("⚠️ 组件已卸载,跳过结果显示");
+        return;
+      }
 
       console.log("✅ 图片+语音日记创建成功:", diary);
       console.log("📸 日记中的图片URLs:", diary.image_urls);
@@ -762,14 +766,42 @@ export default function ImageDiaryModal({
       setEditedTitle(diary.title);
       setEditedContent(diary.polished_content);
       setIsRecordingMode(false);
+
       try {
         deactivateKeepAwake();
       } catch (_) {}
     } catch (error: any) {
       console.error("❌ 处理失败:", error);
-      Alert.alert("错误", error.message || "处理失败，请重试");
-      setIsProcessing(false);
-      deactivateKeepAwake();
+
+      // ✅ 关键修复：所有错误都要正确清理状态
+      if (isMounted) {
+        setIsProcessing(false);
+        setIsRecordingMode(false);
+
+        // ✅ 区分不同类型的错误,提供更友好的提示
+        let errorMessage = "处理失败，请重试";
+        if (error.message) {
+          if (error.message.includes("网络") || error.message.includes("Network")) {
+            errorMessage = "网络连接失败，请检查网络后重试";
+          } else if (error.message.includes("超时")) {
+            errorMessage = "处理超时，请重试";
+          } else if (error.message.includes("任务失败")) {
+            errorMessage = error.message;
+          } else {
+            errorMessage = error.message;
+          }
+        }
+
+        Alert.alert("错误", errorMessage);
+      }
+
+      // ✅ 清理 Keep Awake
+      try {
+        deactivateKeepAwake();
+      } catch (_) {}
+    } finally {
+      // ✅ 标记组件已卸载
+      isMounted = false;
     }
   };
 
@@ -833,15 +865,23 @@ export default function ImageDiaryModal({
       setProcessingProgress(0); // ✅ 重置处理进度
       setShowConfirmModal(false); // ✅ 确保确认弹窗关闭
 
-      // ✅ 显示成功 Toast
+      // ✅ 关键修复：先关闭 Modal
+      onClose();
+      
+      // ✅ 等待 Modal 完全关闭（使用 requestAnimationFrame 确保渲染完成）
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setTimeout(resolve, 100);
+          });
+        });
+      });
+
+      // ✅ 显示成功 Toast（在 Modal 关闭后）
       showToast(t("success.diaryCreated"));
 
-      // ✅ 先关闭 Modal，确保所有 UI 状态都已清理
-      // 在关闭前，确保 showResult 和 showPicker 都已重置，防止 useEffect 再次触发
-      onClose();
-
-      // ✅ 短暂延迟让用户看到 Toast，然后通知父组件刷新列表
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // ✅ 等待 Toast 显示，然后刷新列表
+      await new Promise((resolve) => setTimeout(resolve, 500));
       onSuccess();
     } catch (error: any) {
       console.error("❌ 保存失败:", error);
@@ -1152,148 +1192,28 @@ export default function ImageDiaryModal({
               />
             )}
 
-            {/* 标题和内容卡片 */}
-            <View style={styles.resultDiaryCard}>
-              {/* 标题 */}
-              {isEditingTitle ? (
-                <TextInput
-                  style={[
-                    styles.editTitleInput,
-                    {
-                      fontFamily: getFontFamilyForText(
-                        editedTitle || resultDiary.title,
-                        "bold"
-                      ),
-                    },
-                  ]}
-                  value={editedTitle}
-                  onChangeText={(text) => {
-                    setEditedTitle(text);
-                    setHasChanges(text.trim() !== resultDiary.title);
-                  }}
-                  autoFocus
-                  multiline
-                  placeholder={t("diary.placeholderTitle")}
-                  scrollEnabled={false}
-                  accessibilityLabel={t("diary.placeholderTitle")}
-                  accessibilityHint={t("accessibility.input.textHint")}
-                  accessibilityRole="text"
-                />
-              ) : (
-                <TouchableOpacity
-                  onPress={startEditingTitle}
-                  activeOpacity={0.7}
-                  accessibilityLabel={resultDiary.title}
-                  accessibilityHint={t("accessibility.button.editHint")}
-                  accessibilityRole="button"
-                >
-                  <Text
-                    style={[
-                      styles.resultTitleText,
-                      {
-                        fontFamily: getFontFamilyForText(
-                          resultDiary.title,
-                          "bold"
-                        ),
-                      },
-                    ]}
-                  >
-                    {resultDiary.title}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              {/* 内容 */}
-              {isEditingContent ? (
-                <TextInput
-                  style={[
-                    styles.editContentInput,
-                    {
-                      fontFamily: getFontFamilyForText(
-                        editedContent || resultDiary.polished_content,
-                        "regular"
-                      ),
-                    },
-                  ]}
-                  value={editedContent}
-                  onChangeText={(text) => {
-                    setEditedContent(text);
-                    setHasChanges(text.trim() !== resultDiary.polished_content);
-                  }}
-                  autoFocus
-                  multiline
-                  placeholder={t("diary.placeholderContent")}
-                  scrollEnabled={true}
-                  accessibilityLabel={t("diary.placeholderContent")}
-                  accessibilityHint={t("accessibility.input.textHint")}
-                  accessibilityRole="text"
-                />
-              ) : (
-                <TouchableOpacity
-                  onPress={startEditingContent}
-                  activeOpacity={0.7}
-                  accessibilityLabel={
-                    resultDiary.polished_content.substring(0, 100) +
-                    (resultDiary.polished_content.length > 100 ? "..." : "")
-                  }
-                  accessibilityHint={t("accessibility.button.editHint")}
-                  accessibilityRole="button"
-                >
-                  <Text
-                    style={[
-                      styles.resultContentText,
-                      {
-                        fontFamily: getFontFamilyForText(
-                          resultDiary.polished_content,
-                          "regular"
-                        ),
-                      },
-                    ]}
-                  >
-                    {resultDiary.polished_content}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* AI反馈 - 编辑时隐藏 */}
-            {!isEditingTitle &&
-              !isEditingContent &&
-              !!resultDiary?.ai_feedback && (
-                <View style={styles.resultFeedbackCard}>
-                  <View style={styles.resultFeedbackHeader}>
-                    <PreciousMomentsIcon width={20} height={20} />
-                    <Text
-                      style={[
-                        styles.resultFeedbackTitle,
-                        {
-                          fontFamily: getFontFamilyForText(
-                            t("diary.aiFeedbackTitle"),
-                            "medium"
-                          ),
-                        },
-                      ]}
-                    >
-                      {t("diary.aiFeedbackTitle")}
-                    </Text>
-                  </View>
-                  <Text
-                    style={[
-                      styles.resultFeedbackText,
-                      {
-                        fontFamily: getFontFamilyForText(
-                          resultDiary.ai_feedback,
-                          "regular"
-                        ),
-                      },
-                    ]}
-                    numberOfLines={0}
-                    ellipsizeMode="clip"
-                  >
-                    {resultDiary.ai_feedback}
-                  </Text>
-                </View>
-              )}
+            {/* 标题、内容和AI反馈卡片 - 使用共享组件 */}
+            <DiaryResultView
+              title={resultDiary.title}
+              polishedContent={resultDiary.polished_content}
+              aiFeedback={resultDiary.ai_feedback}
+              emotionData={resultDiary.emotion_data}
+              language={resultDiary.language}
+              isEditingTitle={isEditingTitle}
+              isEditingContent={isEditingContent}
+              editedTitle={editedTitle}
+              editedContent={editedContent}
+              onStartTitleEditing={startEditingTitle}
+              onStartContentEditing={startEditingContent}
+              onTitleChange={(text) => {
+                setEditedTitle(text);
+                setHasChanges(text.trim() !== resultDiary.title);
+              }}
+              onContentChange={(text) => {
+                setEditedContent(text);
+                setHasChanges(text.trim() !== resultDiary.polished_content);
+              }}
+            />
 
             {/* 底部间距 */}
             <View style={{ height: 100 }} />
@@ -2054,7 +1974,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "flex-start",
-    marginBottom: 12, // ✅ 统一规则：间距由 marginBottom 控制
+    // ✅ 移除 rowGap（兼容性问题），改用每个 wrapper 的 marginBottom
+    marginBottom: 10, // ✅ 统一规则：间距由 marginBottom 控制。计算：图片自带 10 + 容器 10 = 20px
     // ✅ 移除 paddingTop：间距由 headerDivider 的 marginBottom 统一控制
   },
   // 文字输入框样式 - 与 TextInputModal 保持一致
@@ -2120,8 +2041,8 @@ const styles = StyleSheet.create({
   imageWrapper: {
     width: THUMBNAIL_SIZE,
     height: THUMBNAIL_SIZE,
-    marginRight: 8, // 最小间距，更紧凑
-    marginBottom: 10,
+    marginRight: 8, // 水平间距 8px
+    marginBottom: 8, // ✅ 添加垂直间距 8px
     borderRadius: 8,
     overflow: "hidden",
     position: "relative",
@@ -2384,8 +2305,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(250, 246, 237, 0.95)", // ✅ 半透明背景
     borderRadius: 12,
     padding: 12,
-    marginTop: 12, // ✅ 缩小与图片缩略图的间距，与页边距（20px）视觉上接近
     marginBottom: 0,
+    // ✅ 移除 marginTop：间距由上方 imageGrid 的 marginBottom 统一控制 (20px)
     // ✅ 去掉 marginHorizontal，与输入框保持一致（都使用 scrollContent 的 paddingHorizontal: 20）
     width: "auto", // ✅ 自动宽度
     maxHeight: 100,
@@ -2477,15 +2398,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     alignContent: "flex-start", // 控制行间距
-    marginBottom: 12, // ✅ 统一规则：间距由 marginBottom 控制
+    marginBottom: 8, // ✅ 图片(8px) + 容器(8px) = 16px 总间距
     gap: 0, // ✅ 确保没有额外的间距（React Native 18+ 支持）
   },
   resultImageWrapper: {
     width: THUMBNAIL_SIZE,
     height: THUMBNAIL_SIZE,
     marginRight: 8,
-    marginBottom: 0, // ✅ 确保图片之间没有垂直间距
-    marginTop: 0, // ✅ 确保图片之间没有垂直间距
+    marginBottom: 8, // ✅ 添加行间距 8px
     borderRadius: 8,
     overflow: "hidden",
   },
@@ -2506,12 +2426,22 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12, // ✅ 统一规则：间距由 marginBottom 控制
   },
+  resultTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  resultTitleContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
   resultTitleText: {
     ...Typography.diaryTitle,
     fontSize: 18,
     color: "#1A1A1A",
     letterSpacing: -0.5,
-    marginBottom: 12,
+    marginBottom: 0, // ✅ 移至 resultTitleRow 控制
   },
   resultContentText: {
     ...Typography.body,
@@ -2572,7 +2502,7 @@ const styles = StyleSheet.create({
   editTitleInput: {
     ...Typography.diaryTitle,
     color: "#1A1A1A",
-    marginBottom: 12,
+    marginBottom: 0, // ✅ 移至 resultTitleRow 控制
     borderWidth: 1,
     borderColor: "#E56C45",
     borderRadius: 8,

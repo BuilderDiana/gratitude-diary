@@ -52,6 +52,7 @@ import { Typography, getFontFamilyForText } from "../styles/typography";
 import ProcessingModal from "./ProcessingModal";
 import VoiceRecordingPanel from "./VoiceRecordingPanel";
 import PreciousMomentsIcon from "../assets/icons/preciousMomentsIcon.svg";
+import DiaryResultView from "./DiaryResultView"; // ✅ 导入共享组件
 
 interface RecordingModalProps {
   visible: boolean;
@@ -1284,156 +1285,28 @@ export default function RecordingModal({
               />
             )}
 
-            {/* 标题和内容卡片 */}
-            <View style={styles.resultDiaryCard}>
-              {/* 标题 */}
-              {isEditingTitle ? (
-                <TextInput
-                  style={styles.editTitleInput}
-                  value={editedTitle}
-                  onChangeText={(text) => {
-                    setEditedTitle(text);
-                    // ✅ 检测标题是否有变化
-                    setHasChanges(text.trim() !== resultDiary.title);
-                  }}
-                  autoFocus
-                  multiline
-                  placeholder={t("diary.placeholderTitle")}
-                  scrollEnabled={false} // ✅ 让外层ScrollView处理滚动
-                  accessibilityLabel={t("diary.placeholderTitle")}
-                  accessibilityHint={t("accessibility.input.textHint")}
-                  accessibilityRole="text"
-                />
-              ) : (
-                <TouchableOpacity
-                  onPress={startEditingTitle}
-                  activeOpacity={0.7}
-                  accessibilityLabel={resultDiary.title}
-                  accessibilityHint={t("accessibility.button.editHint")}
-                  accessibilityRole="button"
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <Text
-                      style={[
-                        styles.resultTitleText,
-                        {
-                          fontFamily: getFontFamilyForText(
-                            resultDiary.title,
-                            "bold"
-                          ),
-                          flex: 1, // ✅ 避免挤压
-                        },
-                      ]}
-                    >
-                      {resultDiary.title}
-                    </Text>
-
-                    {/* ✅ 显示情绪标签 */}
-                    {resultDiary.emotion_data?.emotion && (
-                      <View style={{ marginTop: 2 }}>
-                        <EmotionCapsule 
-                          emotion={resultDiary.emotion_data.emotion}
-                          language={resultDiary.language}
-                          content={resultDiary.polished_content}
-                        />
-                      </View>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              {/* 内容 */}
-              {isEditingContent ? (
-                <TextInput
-                  style={[
-                    styles.editContentInput,
-                    {
-                      fontFamily: getFontFamilyForText(
-                        editedContent || resultDiary.polished_content,
-                        "regular"
-                      ),
-                    },
-                  ]}
-                  value={editedContent}
-                  onChangeText={(text) => {
-                    setEditedContent(text);
-                    // ✅ 检测内容是否有变化
-                    setHasChanges(text.trim() !== resultDiary.polished_content);
-                  }}
-                  autoFocus
-                  multiline
-                  placeholder={t("diary.placeholderContent")}
-                  scrollEnabled={true} // ✅ 让外层ScrollView处理滚动
-                  accessibilityLabel={t("diary.placeholderContent")}
-                  accessibilityHint={t("accessibility.input.textHint")}
-                  accessibilityRole="text"
-                />
-              ) : (
-                <TouchableOpacity
-                  onPress={startEditingContent}
-                  activeOpacity={0.7}
-                  accessibilityLabel={
-                    resultDiary.polished_content.substring(0, 100) +
-                    (resultDiary.polished_content.length > 100 ? "..." : "")
-                  }
-                  accessibilityHint={t("accessibility.button.editHint")}
-                  accessibilityRole="button"
-                >
-                  <Text
-                    style={[
-                      styles.resultContentText,
-                      {
-                        fontFamily: getFontFamilyForText(
-                          resultDiary.polished_content,
-                          "regular"
-                        ),
-                      },
-                    ]}
-                  >
-                    {resultDiary.polished_content}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* AI反馈 - 编辑时隐藏 */}
-            {!isEditingTitle &&
-              !isEditingContent &&
-              !!resultDiary?.ai_feedback && (
-                <View style={styles.resultFeedbackCard}>
-                  <View style={styles.resultFeedbackHeader}>
-                    <PreciousMomentsIcon width={20} height={20} />
-                    <Text
-                      style={[
-                        styles.resultFeedbackTitle,
-                        {
-                          fontFamily: getFontFamilyForText(
-                            t("diary.aiFeedbackTitle"),
-                            "medium"
-                          ),
-                        },
-                      ]}
-                    >
-                      {t("diary.aiFeedbackTitle")}
-                    </Text>
-                  </View>
-                  <Text
-                    style={[
-                      styles.resultFeedbackText,
-                      {
-                        fontFamily: getFontFamilyForText(
-                          resultDiary.ai_feedback,
-                          "regular"
-                        ),
-                      },
-                    ]}
-                    numberOfLines={0}
-                    ellipsizeMode="clip"
-                  >
-                    {resultDiary.ai_feedback}
-                  </Text>
-                </View>
-              )}
+            {/* 标题、内容和AI反馈卡片 - 使用共享组件 */}
+            <DiaryResultView
+              title={resultDiary.title}
+              polishedContent={resultDiary.polished_content}
+              aiFeedback={resultDiary.ai_feedback}
+              emotionData={resultDiary.emotion_data}
+              language={resultDiary.language}
+              isEditingTitle={isEditingTitle}
+              isEditingContent={isEditingContent}
+              editedTitle={editedTitle}
+              editedContent={editedContent}
+              onStartTitleEditing={startEditingTitle}
+              onStartContentEditing={startEditingContent}
+              onTitleChange={(text) => {
+                setEditedTitle(text);
+                setHasChanges(text.trim() !== resultDiary.title);
+              }}
+              onContentChange={(text) => {
+                setEditedContent(text);
+                setHasChanges(text.trim() !== resultDiary.polished_content);
+              }}
+            />
 
             {/* 底部间距 */}
             <View style={{ height: 100 }} />
@@ -1658,11 +1531,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   resultScrollContent: {
+    paddingHorizontal: 20,
     paddingBottom: 20,
   },
 
   resultAudioPlayer: {
-    marginHorizontal: 20,
     marginTop: 16, // ✅ 增加顶部间距
     marginBottom: 12,
   },

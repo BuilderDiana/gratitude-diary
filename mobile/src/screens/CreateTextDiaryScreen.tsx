@@ -461,9 +461,9 @@ export default function CreateTextDiaryScreen() {
                     title={title}
                     polishedContent={polishedContent}
                     aiFeedback={aiFeedback}
-                    isEditing={isEditing}
+                    isEditingContent={isEditing}
                     editedContent={editedContent}
-                    onStartEditing={startEditing}
+                    onStartContentEditing={startEditing}
                     onContentChange={(text) => {
                       setEditedContent(text);
                       setHasChanges(text !== polishedContent);
@@ -632,6 +632,7 @@ const styles = StyleSheet.create({
 
   resultSection: {
     paddingTop: 16,
+    paddingHorizontal: 20,
   },
 
   // ===== 底部保存按钮栏 =====

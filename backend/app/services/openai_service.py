@@ -170,8 +170,46 @@ class OpenAIService:
             
             text = (response_json.get("text") or "").strip()
             segments = response_json.get("segments", []) or []
+            detected_language = response_json.get("language", "").lower()  # ✅ 获取检测到的语言
             
+            # 🔥 新增：语言白名单检查 - 防止背景音乐被误识别为韩语/日语等
+            SUPPORTED_LANGUAGES = {"zh", "en", "chinese", "english"}
+            if detected_language and detected_language not in SUPPORTED_LANGUAGES:
+                print(f"❌ 检测到不支持的语言: '{detected_language}'")
+                print(f"   识别文本: '{text[:100]}'")
+                print(f"   这可能是背景音乐或噪音被误识别")
+                raise ValueError("未识别到有效内容，请用中文或英文说话")
+            
+            # 🔥 新增：检测韩语/日语字符 - 双重保险
             import re
+            korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))  # 韩语字符
+            japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))  # 日语字符
+            if korean_chars > 3 or japanese_chars > 3:
+                print(f"❌ 检测到韩语/日语字符: 韩语={korean_chars}, 日语={japanese_chars}")
+                print(f"   识别文本: '{text[:100]}'")
+                print(f"   这可能是背景音乐或噪音被误识别")
+                raise ValueError("未识别到有效内容，请用中文或英文说话")
+            
+            # 🔥 新增：检测重复文本模式 - Whisper 幻觉的常见特征
+            # 例如: "닭가슴살 치킨입니다. 닭가슴살 치킨과 닭가슴살 치킨은..."
+            words = text.split()
+            if len(words) >= 5:
+                # 检查是否有大量重复的词
+                word_counts = {}
+                for word in words:
+                    if len(word) >= 3:  # 只统计长度>=3的词
+                        word_counts[word] = word_counts.get(word, 0) + 1
+                
+                # 如果某个词出现次数超过总词数的40%,可能是幻觉
+                max_repetition = max(word_counts.values()) if word_counts else 0
+                repetition_ratio = max_repetition / len(words) if len(words) > 0 else 0
+                
+                if repetition_ratio > 0.4:
+                    print(f"❌ 检测到高度重复的文本模式: 重复率={repetition_ratio:.1%}")
+                    print(f"   识别文本: '{text[:100]}'")
+                    print(f"   这可能是背景音乐或噪音被误识别")
+                    raise ValueError("未识别到有效内容，请说清楚一些")
+            
             normalized_text = re.sub(r"\s+", "", text)
             
             if len(normalized_text) < self.LENGTH_LIMITS["min_audio_text"]:
@@ -390,20 +428,32 @@ class OpenAIService:
                 chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', content_only))
                 # 统计英文字符（单词）
                 english_words = len(re.findall(r'[a-zA-Z]+', content_only))
-                # 计算中文字符占比
-                chinese_ratio = chinese_chars / len(content_only) if len(content_only) > 0 else 0
-                # 计算英文单词占比（每个单词平均5个字符估算）
-                english_ratio = (english_words * 5) / len(content_only) if len(content_only) > 0 else 0
                 
-                # 🔥 关键逻辑：如果中文字符占比超过30%，或者中文字符数量明显多于英文单词，判定为中文
-                # 这样可以避免"少量中文+大量英文"被误判为英文的情况
-                if chinese_ratio > 0.3 or (chinese_chars > 5 and chinese_chars > english_words * 2):
-                    detected_lang = "Chinese"
-                elif english_ratio > 0.5 or english_words > 10:
-                    detected_lang = "English"
+                # 🔥 新增：检测韩语/日语字符
+                korean_chars = len(re.findall(r'[\uac00-\ud7af]', content_only))
+                japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', content_only))
+                
+                # 🔥 语言白名单检查：如果检测到大量非中英文字符，降级到系统默认语言
+                if korean_chars > 5 or japanese_chars > 5:
+                    print(f"⚠️ 检测到非支持语言字符: 韩语={korean_chars}, 日语={japanese_chars}")
+                    print(f"   内容: '{text[:50]}'")
+                    print(f"   降级到系统默认语言: Chinese")
+                    detected_lang = "Chinese"  # 降级到中文
                 else:
-                    # 默认：如果中文字符存在且数量>=3，判定为中文
-                    detected_lang = "Chinese" if chinese_chars >= 3 else "English"
+                    # 计算中文字符占比
+                    chinese_ratio = chinese_chars / len(content_only) if len(content_only) > 0 else 0
+                    # 计算英文单词占比（每个单词平均5个字符估算）
+                    english_ratio = (english_words * 5) / len(content_only) if len(content_only) > 0 else 0
+                    
+                    # 🔥 关键逻辑：如果中文字符占比超过30%，或者中文字符数量明显多于英文单词，判定为中文
+                    # 这样可以避免"少量中文+大量英文"被误判为英文的情况
+                    if chinese_ratio > 0.3 or (chinese_chars > 5 and chinese_chars > english_words * 2):
+                        detected_lang = "Chinese"
+                    elif english_ratio > 0.5 or english_words > 10:
+                        detected_lang = "English"
+                    else:
+                        # 默认：如果中文字符存在且数量>=3，判定为中文
+                        detected_lang = "Chinese" if chinese_chars >= 3 else "English"
             
             print(f"🌍 检测到语言: {detected_lang} (中文字符={chinese_chars}, 英文单词={english_words})")
             
@@ -445,7 +495,7 @@ class OpenAIService:
                 emotion_data = feedback_data
             else:
                 feedback_text = str(feedback_data)
-                emotion_data = {"emotion": "Neutral", "confidence": 0.0}
+                emotion_data = {"emotion": "Reflective", "confidence": 0.0}
             
             # 合并结果
             result = {
@@ -550,7 +600,75 @@ WRONG Examples (DO NOT DO THIS):
 
 CORRECT Examples:
 - User input: "today was good i went to park" → Title: "A Day at the Park" ✅
-- User input: "オレンジの魅力 Talking about orange..." → Title: "The Charm of Oranges" ✅ (English, not Japanese)"""
+- User input: "オレンジの魅力 Talking about orange..." → Title: "The Charm of Oranges" ✅ (English, not Japanese)
+
+🎯 SPECIAL POLISHING RULES FOR ENGLISH (Non-Native Speaker Support):
+**PRIORITY ORDER (CRITICAL - Follow this exact sequence):**
+1. **PRIMARY GOAL**: Transform the text to sound like a native English speaker wrote it
+   - Eliminate ALL non-native patterns, awkward phrasing, and "foreign feel"
+   - Use natural idioms, collocations, and sentence structures that native speakers use
+   - Make it flow smoothly and authentically in English
+   
+2. **SECONDARY GOAL**: While maintaining native fluency, preserve the user's intended meaning
+   - Keep the core message, emotions, and key details intact
+   - Don't add information the user didn't express
+   - If there's a conflict between sounding native and preserving exact wording, ALWAYS choose native fluency
+
+3. **EDUCATIONAL VALUE**: Your polished version should serve as a learning example
+   - Non-native speakers will compare your version to their original to improve their English
+   - Use this as an opportunity to demonstrate natural, idiomatic English
+
+📋 COMMON NON-NATIVE PATTERNS TO FIX:
+- Missing articles (a/an/the): "I went to park" → "I went to the park"
+- Wrong prepositions: "in the morning of Monday" → "on Monday morning"
+- Unnatural word order: "I very like it" → "I really like it" or "I like it a lot"
+- Literal translations: "eat medicine" → "take medicine"
+- Overly formal/textbook language: "I am feeling very happy" → "I'm so happy" or "I feel great"
+- Choppy sentences: "I went to store. I bought milk. I came home." → "I went to the store, bought some milk, and came home."
+- Missing contractions in casual writing: "I am going to" → "I'm going to" or "I'm gonna"
+- Awkward tense usage: "Today I am going to park" (when it already happened) → "I went to the park today"
+
+✨ NATIVE ENGLISH ENHANCEMENT TECHNIQUES:
+- Use contractions naturally (I'm, don't, can't, it's) in casual diary entries
+- Apply common phrasal verbs: "continue" → "keep going", "understand" → "figure out"
+- Add natural filler words when appropriate: "well", "so", "anyway", "actually"
+- Use idiomatic expressions: "very tired" → "exhausted" or "beat", "very happy" → "thrilled" or "over the moon"
+- Vary sentence structure for better flow (mix short and long sentences)
+- Use more specific, vivid vocabulary: "good" → "great/wonderful/fantastic", "bad" → "rough/tough/awful"
+
+🔍 BEFORE/AFTER EXAMPLES:
+
+Example 1 - Basic Grammar + Natural Flow:
+❌ Original: "today i go to park and see many flower it make me very happy"
+✅ Polished: "I went to the park today and saw so many flowers—it made me really happy!"
+(Fixed: capitalization, tense, articles, added natural emphasis with "so many", used contraction-like flow)
+
+Example 2 - Removing Non-Native Patterns:
+❌ Original: "I am very like this new job because can learn many things"
+✅ Polished: "I really love this new job because I'm learning so much!"
+(Fixed: "very like"→"really love", added subject "I'm", "many things"→"so much", more natural enthusiasm)
+
+Example 3 - Idiomatic Enhancement:
+❌ Original: "Today weather is not good so I stay at house and do nothing"
+✅ Polished: "The weather was terrible today, so I just stayed home and did nothing."
+(Fixed: added article "the", "not good"→"terrible", "at house"→"home", added natural "just")
+
+Example 4 - Voice Input (Casual Speech):
+❌ Original: "um i think i want to try this voice input thing lets see how it work"
+✅ Polished: "Um, I think I want to try this voice input thing. Let's see how it works!"
+(Fixed: punctuation, capitalization, "work"→"works", kept casual "um" as it's authentic)
+
+Example 5 - Preserving Meaning While Improving Flow:
+❌ Original: "I have one meeting today. The meeting is very boring. I don't like the meeting. After meeting I feel tired."
+✅ Polished: "I had a meeting today, and it was so boring. I really didn't like it, and afterwards I felt exhausted."
+(Combined choppy sentences, varied structure, used more natural vocabulary, maintained all original meaning)
+
+⚠️ WHAT NOT TO CHANGE:
+- Don't change the emotional tone (if user is casual, keep it casual; if formal, keep formal)
+- Don't add details or experiences the user didn't mention
+- Don't remove important information to make it "sound better"
+- Don't over-polish to the point it doesn't sound like a diary entry anymore
+- Keep proper nouns, names, and specific terms as-is (unless there's a clear typo)"""
             else:
                 # 默认：检测语言，但必须严格匹配
                 language_instruction = """🚨 CRITICAL LANGUAGE RULE - YOU MUST FOLLOW:
@@ -575,20 +693,60 @@ Examples:
 {language_instruction}
 
 Your responsibilities:
-1. Fix obvious grammar/typos
-2. Make the text flow naturally
-3. Keep it ≤115% of original length
-4. **CRITICAL: Preserve ALL original content. Do NOT delete or omit any part of the user's entry.**
-5. **Formatting: Preserve the user's line breaks, blank lines, and bullet/numbered lists. Do NOT merge everything into one paragraph.**
-6. **If the input is long and mostly one block (no line breaks), add clear paragraph breaks based on meaning.**
-7. **Avoid overly short paragraphs. Do NOT break right after the first sentence. Keep the first 3 sentences in the same paragraph when you add breaks.**
-8. **🚨 MOST CRITICAL: Create a title in the EXACT SAME LANGUAGE as the user's primary input language**
+1. **For ENGLISH input (non-native speakers):**
+   - PRIMARY: Make it sound like a native English speaker wrote it (eliminate all non-native patterns)
+   - SECONDARY: Preserve the user's intended meaning and emotions
+   - GOAL: Help users learn natural English by providing an exemplary polished version
+   
+2. **For OTHER languages (Chinese, etc.):**
+   - Fix obvious grammar/typos
+   - Make the text flow naturally
+   - Keep it authentic and close to the original style
+
+3. **Universal rules:**
+   - Keep polished content ≤115% of original length
+   - **CRITICAL: Preserve ALL original content. Do NOT delete or omit any part of the user's entry.**
+   - **Formatting: Preserve the user's line breaks, blank lines, and bullet/numbered lists. Do NOT merge everything into one paragraph.**
+   - **If the input is long and mostly one block (no line breaks), add clear paragraph breaks based on meaning.**
+   - **Avoid overly short paragraphs. Do NOT break right after the first sentence. Keep the first 3 sentences in the same paragraph when you add breaks.**
+   
+4. **🚨 MOST CRITICAL: Create a title in the EXACT SAME LANGUAGE as the user's primary input language**
    - If user writes in Chinese → Title MUST be in Chinese
    - If user writes in English → Title MUST be in English
    - The title language must match the content language - NO EXCEPTIONS
    - Title should be short, warm, poetic, and meaningful, but ALWAYS in the user's language
+   
+5. **🚨 TITLE CONTENT RULES - AVOID GENERIC AND REDUNDANT TITLES:**
+   - **NEVER use "今日" (today) in Chinese titles** - It's too generic and meaningless
+   - **NEVER use "Today's..." in English titles** - Same reason, too generic
+   - **If you must reference the day, use specific date format instead**: "1月9日" (Jan 9), not "今日"
+   - **AVOID repeating the first line of content in the title** - The title should complement, not duplicate
+   - **Be specific and meaningful**: Extract the core theme, emotion, or key event from the content
+   
+   **🎯 SPECIAL RULE FOR TASK LISTS AND PLANNING CONTENT:**
+   - **For task lists, to-do lists, or planning content (任务清单, 计划, to-do, plan, goal):**
+     - **MUST include the specific date in the title** to make it informative and unique
+     - Use format: "1月9日 + theme" (Chinese) or "Jan 9 + theme" (English)
+     - This prevents repetitive titles like "任务清单" appearing multiple times
+   
+   Examples of BAD titles (DO NOT USE):
+   ❌ "今日任务清单" - Generic "today" + redundant with content's first line "今日任务:"
+   ❌ "任务清单" - Too generic, will repeat for every task list entry
+   ❌ "今日记录" - Too generic, no meaning
+   ❌ "Today's Thoughts" - Generic "today"
+   ❌ "Task List" - Too generic, will repeat
+   
+   Examples of GOOD titles:
+   ✅ "1月9日任务清单" - Specific date + clear theme, won't repeat
+   ✅ "Jan 9 Task List" - Specific date + clear theme
+   ✅ "1月9日的App上架计划" - Date + specific goal
+   ✅ "App Store上架计划" - Specific, captures the main theme (if not a generic task list)
+   ✅ "迈向新目标" - Meaningful, captures the essence
 
-Style: Natural, warm, authentic. Don't over-edit.
+Style Guidelines:
+- **For English**: Natural, fluent, native-sounding. Prioritize authenticity over preserving awkward phrasing.
+- **For Chinese**: Natural, warm, authentic. Don't over-edit.
+- **For all**: Keep the emotional tone and diary-like feel.
 
 Response format (JSON only):
 {{
@@ -801,7 +959,7 @@ Output: {{"title": "A Visit to the Park", "polished_content": "I went to 公园 
             
             # 构建统一的系统提示词
             # 情绪列表：与前端 EmotionType 保持严格一致
-            # Joyful, Grateful, Proud, Peaceful, Reflective, Down, Anxious, Venting, Drained, Neutral
+            # Joyful, Grateful, Proud, Peaceful, Reflective, Intentional, Inspired, Down, Anxious, Venting, Drained
             system_prompt = f"""You are a warm, empathetic listener AND an emotion analyst.
 
 LANGUAGE RULES:
@@ -817,15 +975,54 @@ LANGUAGE RULES:
 
 📊 EMOTION ANALYSIS RULES:
 Analyze the user's emotion from the text/images and choose ONE from this STRICT list:
-[Joyful, Grateful, Proud, Peaceful, Reflective, Down, Anxious, Venting, Drained, Neutral]
+[Joyful, Grateful, Proud, Peaceful, Reflective, Intentional, Inspired, Down, Anxious, Venting, Drained]
 
-Usage Guide:
-- **Reflective**: For deep thoughts, self-reflection, insights.
-- **Neutral**: For task lists, daily plans, objective records, or routine logs (e.g., "Today I did X, Y, Z").
-- **Peaceful**: For calm, relaxed, meditative moments.
-- **Venting**: For frustration, angry ranting.
-- **Drained**: For exhaustion, tiredness.
-- **Down**: For sadness, disappointment.
+🚨 CRITICAL PRIORITY RULES - FOLLOW THESE FIRST:
+1. **If text contains planning keywords** ("计划", "打算", "想要", "要做", "目标", "准备", "安排", "更新", "plan", "goal", "to-do", "will do", "going to", "want to", "update") → **MUST choose Intentional**, NOT Joyful, NOT Reflective
+2. **If text contains learning keywords** ("学到", "学习", "发现", "了解到", "认识到", "新知", "观点", "启发", "learn", "discover", "realize", "insight", "knowledge", "phrase", "concept") → **MUST choose Inspired**, NOT Joyful, NOT Reflective
+
+🎯 Detailed Usage Guide:
+
+**Positive Emotions (高能量/正向):**
+- **Joyful (喜悦)**: Pure happiness, celebration, good things happening. User expresses excitement, delight, or joy. **ONLY use if NO planning or learning keywords present.**
+- **Grateful (感恩)**: Thankfulness towards people, events, or things. Core of gratitude journaling.
+- **Proud (自豪)**: Sense of profound accomplishment, deep self-satisfaction, or achieving a significant milestone. ONLY use when the user EXPLICITLY expresses being proud of themselves, their efforts, or their results (e.g., "I'm proud of myself", "I finally did it", "I'm so satisfied with my work"). Use sparingly; default to Joyful or Reflective if the accomplishment is routine.
+
+**Neutral/Constructive (稳态/建设性):**
+- **Peaceful (平静)**: Inner calm, no turmoil, relaxed state.
+- **Reflective (感悟)**: Deep thoughts, insights, rational analysis. **ONLY use if NO planning or learning keywords present.**
+- **Intentional (笃定)**: 🆕 **HIGHEST PRIORITY for planning content**. Goal-setting, planning, creating to-do lists, expressing intentions.
+  **MANDATORY KEYWORDS**: "计划", "打算", "想要", "要做", "目标", "更新", "plan", "goal", "to-do", "will do", "want to", "update"
+  **If ANY of these keywords appear → MUST choose Intentional**
+  Examples:
+  - "今天我想要把这个产品更新到App Store" → **Intentional** ✅ (contains "想要", "更新")
+  - "产品更新计划" → **Intentional** ✅ (contains "更新", "计划")
+  
+- **Inspired (启迪)**: 🆕 **HIGHEST PRIORITY for learning content**. Recording learning notes, new knowledge, insights.
+  **MANDATORY KEYWORDS**: "学到", "学习", "发现", "了解到", "learn", "discover", "phrase", "concept"
+  **If ANY of these keywords appear → MUST choose Inspired**
+  Examples:
+  - "Today, I learned a new phrase" → **Inspired** ✅ (contains "learned", "phrase")
+  - "今天学到一个概念" → **Inspired** ✅ (contains "学到", "概念")
+
+**Negative/Release (低能量/宣泄):**
+- **Down (低落)**: Difficulty, disappointment, regret.
+- **Drained (耗竭)**: Exhaustion, burnout, lack of motivation.
+- **Venting (宣泄)**: Frustration, annoyance, venting emotions.
+- **Anxious (焦虑)**: Worry about the future, tension, pressure.
+
+🚨 CRITICAL EXAMPLES - STUDY THESE CAREFULLY:
+1. "今天我想要把这个产品更新到App Store，同时上架安卓市场" 
+   → **Intentional** ✅ (contains "想要", "更新", "上架" - planning keywords)
+   → NOT Joyful ❌ (even if user sounds excited)
+   
+2. "Today, I learned a new phrase; it's called 'spot on'" 
+   → **Inspired** ✅ (contains "learned", "phrase" - learning keywords)
+   → NOT Joyful ❌ (even if user sounds happy)
+   
+3. "产品更新计划"
+   → **Intentional** ✅ (contains "更新", "计划" - planning keywords)
+   → NOT Reflective ❌
 
 Response format (JSON ONLY):
 {{
@@ -834,6 +1031,7 @@ Response format (JSON ONLY):
   "confidence": 0.9,
   "rationale": "Short reason for analysis"
 }}"""
+
 
             # 构建消息
             user_content = []
@@ -868,7 +1066,12 @@ Response format (JSON ONLY):
             try:
                 result = json.loads(content)
                 reply = result.get("reply", "").strip()
-                emotion = result.get("emotion", "Neutral")
+                emotion = result.get("emotion", "Reflective")
+                
+                # ✅ 添加调试日志
+                print(f"🔍 [DEBUG] 名字前缀检查:")
+                print(f"   user_name 参数: '{user_name}'")
+                print(f"   AI 原始回复: '{reply}'")
                 
                 # 名字前缀检查
                 if user_name and user_name.strip():
@@ -887,7 +1090,7 @@ Response format (JSON ONLY):
                 print("⚠️ JSON 解析失败，回退到纯文本处理")
                 return {
                     "reply": content.strip(),
-                    "emotion": "Neutral", 
+                    "emotion": "Reflective", 
                     "confidence": 0.5,
                     "rationale": "Extracted from non-JSON response"
                 }
@@ -897,7 +1100,7 @@ Response format (JSON ONLY):
             fallback_reply = "感谢分享你的这一刻。" if language == "Chinese" else "Thanks for sharing this moment."
             return {
                 "reply": fallback_reply,
-                "emotion": "Neutral",
+                "emotion": "Reflective",
                 "confidence": 0.0,
                 "rationale": "Fallback due to error"
             }
@@ -930,7 +1133,7 @@ Response format (JSON ONLY):
         title = (result.get("title", "") or "").strip()
         polished = (result.get("polished_content", "") or "").strip()
         feedback = (result.get("feedback", "") or "").strip()
-        emotion_data = result.get("emotion_data", {"emotion": "Neutral"}) # ✅ 保留情绪数据
+        emotion_data = result.get("emotion_data", {"emotion": "Reflective"}) # ✅ 保留情绪数据
         
         # 🔥 强化语言一致性验证：更准确地检测和修正
         title_has_chinese = bool(re.search(r'[\u4e00-\u9fff]', title))

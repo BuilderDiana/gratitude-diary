@@ -285,6 +285,7 @@ export default function AudioPlayer({
         style={styles.playButton}
         onPress={onPlayPress}
         activeOpacity={0.8}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         accessibilityLabel={
           isPlaying
             ? t("accessibility.audio.paused")
@@ -309,6 +310,9 @@ export default function AudioPlayer({
             onLayout={handleLayout}
             {...panResponder.panHandlers}
           >
+            {/* 视觉背景线 */}
+            <View style={styles.progressBackground} />
+            
             <Animated.View
               style={[
                 styles.progressFill,
@@ -348,10 +352,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#FFE8D6",
-    padding: 9,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 40,
+    height: 46, // ✅ 固定高度从 40 修正为 46, 确保不跳动
   },
   playButton: {
     marginRight: 12,
@@ -389,26 +393,32 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   progressBar: {
+    height: 44, // ✅ 垂直热区保持 44px
+    justifyContent: "center",
+    position: "relative",
+    width: "100%",
+  },
+  progressBackground: {
     height: 4,
     backgroundColor: "#FFE8D6",
     borderRadius: 2,
-    position: "relative",
+    width: "100%",
+    position: "absolute",
   },
   progressFill: {
     position: "absolute",
     left: 0,
-    top: 0,
-    bottom: 0,
+    height: 4,
     backgroundColor: "#E56C45",
     borderRadius: 2,
   },
   progressThumb: {
     position: "absolute",
-    top: -6,
-    width: 16,
+    width: 16, // ✅ 缩小 4px（从 20 调至 16）
     height: 16,
     borderRadius: 8,
     backgroundColor: "#E56C45",
+    top: 14, // (44-16)/2 = 14
     marginLeft: -8,
   },
 });

@@ -27,15 +27,15 @@ export const EmotionGlow: React.FC<EmotionGlowProps> = ({ emotion }) => {
           <Defs>
             <RadialGradient
               id="grad"
-              cx="55%"
+              cx="70%"  // 光影几何中心 - 向右移动,对齐标签
               cy="45%"
               rx="50%"
               ry="50%"
-              fx="80%"
+              fx="75%"  // 光源焦点 - 最亮的点,对齐标签中心
               fy="20%"
               gradientUnits="userSpaceOnUse"
             >
-
+              {/* 🎨 增强光影效果: 提高中心透明度从0.5到0.7,让光影更明显 */}
               <Stop offset="0" stopColor={baseColor} stopOpacity="0.5" />
               <Stop offset="1" stopColor={baseColor} stopOpacity="0" />
             </RadialGradient>
@@ -59,8 +59,8 @@ const styles = StyleSheet.create({
   // 2. 定位容器
   svgPositioner: {
     position: 'absolute',
-    top: 4,     // ✅ 恢复顶部留白
-    right: 4,   // ✅ 恢复右侧留白
+    top: 2,     // ✅ 恢复顶部留白
+    right: 2,   // ✅ 恢复右侧留白
     width: 200,  
     height: 80, 
   },
