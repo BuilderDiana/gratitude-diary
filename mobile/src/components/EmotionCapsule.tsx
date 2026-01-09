@@ -1,6 +1,6 @@
-import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { EmotionType, EMOTION_MAP, DEFAULT_EMOTION } from '../types/emotion';
+import { getFontFamilyForText } from '../styles/typography';
 
 interface EmotionCapsuleProps {
   emotion: string | null | undefined;
@@ -17,7 +17,7 @@ export const EmotionCapsule: React.FC<EmotionCapsuleProps> = ({ emotion, languag
 
   // 2. 智能语言检测
   // 优先使用内容检测,如果没有内容则使用language参数
-  let isChinese = language.toLowerCase().startsWith('zh');
+  let isChinese = (language || 'en').toLowerCase().startsWith('zh');
   
   if (content && content.trim()) {
     // ✅ 根据内容自动检测语言
@@ -38,7 +38,10 @@ export const EmotionCapsule: React.FC<EmotionCapsuleProps> = ({ emotion, languag
 
   return (
     <View style={[styles.container, { backgroundColor: config.color }]}>
-      <Text style={[styles.text, { color: config.darkText ? '#333333' : '#FFFFFF' }]}>
+      <Text style={[styles.text, { 
+        color: config.darkText ? '#333333' : '#FFFFFF',
+        fontFamily: getFontFamilyForText(label, 'medium')
+      }]}>
         {label}
       </Text>
     </View>

@@ -65,10 +65,14 @@ async function prepareImageForUpload(
     );
     const targetFormat = ext === ".png" ? SaveFormat.PNG : SaveFormat.JPEG;
     const compress = ext === ".png" ? PNG_QUALITY : JPEG_QUALITY;
-    const result = await manipulateAsync(uri, [], {
-      compress,
-      format: targetFormat,
-    });
+    const result = await manipulateAsync(
+      uri,
+      [{ resize: { width: 1500 } }], // ✅ 关键优化 1：调整尺寸到 1500px，这能极大减小体积且不损视觉质量
+      {
+        compress,
+        format: targetFormat,
+      }
+    );
 
     const outputExt = targetFormat === SaveFormat.PNG ? ".png" : ".jpg";
     const fileNameBase = rawFileName.replace(/\.[^/.]+$/, "") || `image${index + 1}`;
@@ -261,10 +265,12 @@ export async function createImageOnlyDiary(
  * 3. 返回最终的 S3 URL 列表
  *
  * @param imageUris - Local image file URIs
+ * @param onProgress - Optional callback to track upload progress (0-100)
  * @returns Array of S3 URLs
  */
 export async function uploadDiaryImages(
-  imageUris: string[]
+  imageUris: string[],
+  onProgress?: (progress: number) => void
 ): Promise<string[]> {
   console.log("📤 上传图片到 S3（使用预签名 URL），数量:", imageUris.length);
 
@@ -389,6 +395,12 @@ export async function uploadDiaryImages(
           console.log(
             `  ✅ 图片 ${i + 1} 上传成功: ${presignedData.final_url}`
           );
+          
+          // ✅ 报告真实进度：每上传完一张图片，更新进度
+          if (onProgress) {
+            const progress = Math.round(((i + 1) / preparedImages.length) * 100);
+            onProgress(progress);
+          }
         }
 
         console.log("✅ 所有图片上传成功:", finalUrls);
@@ -404,54 +416,55 @@ export async function uploadDiaryImages(
     const presignedData = await presignedResponse.json();
     const presignedUrls = presignedData.presigned_urls;
 
-    // Step 4: Upload each image directly to S3
-    console.log("📤 Step 2: 直接上传到 S3...");
-    const finalUrls: string[] = [];
+    // Step 4: Parallel upload each image directly to S3
+    console.log("📤 Step 2: [并行上传] 直接上传到 S3...");
+    const totalImages = preparedImages.length;
+    let completedUploads = 0; // ✅ 修复变量丢失问题
 
-        for (let i = 0; i < preparedImages.length; i++) {
-          const uri = preparedImages[i].uri;
-          const presignedData = presignedUrls[i];
+    const uploadTasks = preparedImages.map(async (prepared, i) => {
+      const uri = prepared.uri;
+      const presignedData = presignedUrls[i];
+      const MAX_RETRIES = 2; // 总共尝试 3 次
 
-      console.log(`  📤 上传图片 ${i + 1}/${imageUris.length} 到 S3...`);
-      console.log(`  📎 图片URI: ${uri}`);
-      console.log(`  📎 预签名URL: ${presignedData.presigned_url}`);
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            console.log(`  🔄 图片 ${i + 1} 重试中 (${attempt}/${MAX_RETRIES})...`);
+            // 指数退避延迟
+            await new Promise(r => setTimeout(r, attempt * 1000));
+          }
 
-      try {
-        // Read image file
-        const response = await fetch(uri);
-        if (!response.ok) {
-          throw new Error(
-            `读取图片文件失败: ${response.status} - ${response.statusText}`
-          );
-        }
-        const blob = await response.blob();
-        console.log(`  📎 图片大小: ${blob.size} bytes`);
-
-        // Upload to S3 using presigned URL
+          const response = await fetch(uri);
+          if (!response.ok) throw new Error(`读取本地文件失败: ${response.status}`);
+          const blob = await response.blob();
+          
           const uploadResponse = await fetch(presignedData.presigned_url, {
             method: "PUT",
-            headers: {
-              "Content-Type": contentTypes[i],
-            },
-          body: blob,
-        });
+            headers: { "Content-Type": contentTypes[i] },
+            body: blob,
+          });
 
-        if (!uploadResponse.ok) {
-          const errorText = await uploadResponse.text().catch(() => "");
-          throw new Error(
-            `上传图片 ${i + 1} 到 S3 失败: ${uploadResponse.status} - ${errorText || uploadResponse.statusText}`
-          );
+          if (!uploadResponse.ok) {
+            throw new Error(`S3 返回错误: ${uploadResponse.status}`);
+          }
+
+          console.log(`  ✅ 图片 ${i + 1} 上传成功`);
+          
+          if (onProgress) {
+            completedUploads++;
+            const progress = Math.round((completedUploads / totalImages) * 100);
+            onProgress(progress);
+          }
+          
+          return presignedData.final_url;
+        } catch (error: any) {
+          console.error(`  ❌ 图片 ${i + 1} 第 ${attempt + 1} 次尝试失败:`, error.message);
+          if (attempt === MAX_RETRIES) throw error;
         }
-
-        finalUrls.push(presignedData.final_url);
-        console.log(`  ✅ 图片 ${i + 1} 上传成功: ${presignedData.final_url}`);
-      } catch (error: any) {
-        console.error(`  ❌ 图片 ${i + 1} 上传失败:`, error);
-        throw new Error(
-          `图片 ${i + 1} 上传失败: ${error.message || "未知错误"}`
-        );
       }
-    }
+    });
+
+    const finalUrls = await Promise.all(uploadTasks as Promise<string>[]);
 
     console.log("✅ 所有图片上传成功:", finalUrls);
     return finalUrls;

@@ -124,6 +124,8 @@ export default {
     welcome: "Hi {name}",
     subtitle: "Anything you'd like to appreciate,\nor gently share today?",
     myDiary: "My precious moments",
+    myDiaryPrefix: "My",
+    myDiarySuffix: "precious moments",
     noDiaries: "Ready to pause and capture your day? Your story begins here",
     refreshing: "Refreshing...",
     signOut: "Sign out",

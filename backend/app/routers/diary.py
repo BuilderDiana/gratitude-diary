@@ -1553,18 +1553,16 @@ async def create_image_only_diary(
 
 @router.get("/list", response_model=List[DiaryResponse], summary="获取日记列表")
 async def get_diaries(
-    limit: int = 20,
     user: Dict = Depends(get_current_user)
 ):
     """
-    获取用户的日记列表
+    获取用户的所有日记列表（无数量限制）
 
     Args:
-        limit: 返回数量限制（默认 20）
         user: 当前登录用户
     """
     try:
-        print(f"📖 收到获取日记列表请求 - 用户ID: {user.get('user_id')}, limit: {limit}")
+        print(f"📖 收到获取日记列表请求 - 用户ID: {user.get('user_id')}")
         
         # 检查用户ID是否存在
         user_id = user.get('user_id')
@@ -1575,8 +1573,8 @@ async def get_diaries(
                 detail="用户ID无效"
             )
         
-        # 尝试获取日记列表
-        diaries = db_service.get_user_diaries(user_id, limit)
+        # 尝试获取所有日记
+        diaries = db_service.get_user_diaries(user_id)
         if diaries and len(diaries) > 0:
             print(f"🔍 [DEBUG] 第一条日记情感数据: {diaries[0].get('emotion_data')}")
         print(f"✅ 获取日记列表成功 - 用户: {user_id}, 数量: {len(diaries)}")

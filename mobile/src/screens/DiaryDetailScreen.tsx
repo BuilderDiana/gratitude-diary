@@ -37,11 +37,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import PreciousMomentsIcon from "../assets/icons/preciousMomentsIcon.svg";
+import CalendarIcon from "../assets/icons/calendarIcon.svg";
 import { useSingleAudioPlayer } from "../hooks/useSingleAudioPlayer";
 import { getDiaryDetail } from "../services/diaryService";
 import { updateDiary } from "../services/diaryService"; // ✅ 添加
 import AudioPlayer from "../components/AudioPlayer";
 import { EmotionCapsule } from "../components/EmotionCapsule"; // ✅ 导入情绪胶囊组件
+import { EmotionGlow } from "../components/EmotionGlow"; // ✅ 导入情绪光晕组件
+import { AIFeedbackCard } from "../components/AIFeedbackCard"; // ✅ 导入 AI 暖心回复组件
+import { EmotionType, EMOTION_MAP, DEFAULT_EMOTION } from "../types/emotion"; // ✅ 导入情绪配置用于动态颜色
 
 // ============================================================================
 // 🌍 导入翻译函数
@@ -295,6 +299,7 @@ export default function DiaryDetailScreen({
       return (
         <View style={styles.imageOnlyHeader}>
           <View style={styles.dateContainer}>
+            <CalendarIcon width={20} height={20} />
             <Text
               style={[
                 styles.dateText,
@@ -310,7 +315,11 @@ export default function DiaryDetailScreen({
             </Text>
           </View>
 
-          <TouchableOpacity onPress={closeSheet} style={styles.closeButton}>
+          <TouchableOpacity 
+            onPress={closeSheet} 
+            style={styles.closeButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
             <Ionicons name="close-outline" size={24} color="#666" />
           </TouchableOpacity>
         </View>
@@ -326,23 +335,22 @@ export default function DiaryDetailScreen({
             <TouchableOpacity
               onPress={cancelEditing}
               style={styles.detailHeaderButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <View style={styles.cancelButtonContent}>
-                <Ionicons name="arrow-back" size={20} color="#666" />
-                <Text
-                  style={[
-                    styles.detailHeaderButtonText,
-                    {
-                      fontFamily: getFontFamilyForText(
-                        t("common.cancel"),
-                        "regular"
-                      ),
-                    },
-                  ]}
-                >
-                  {t("common.cancel")}
-                </Text>
-              </View>
+              <Text
+                style={[
+                  styles.detailHeaderButtonText,
+                  styles.cancelText,
+                  {
+                    fontFamily: getFontFamilyForText(
+                      t("common.cancel"),
+                      "regular"
+                    ),
+                  },
+                ]}
+              >
+                {t("common.cancel")}
+              </Text>
             </TouchableOpacity>
 
             <Text
@@ -359,6 +367,7 @@ export default function DiaryDetailScreen({
             <TouchableOpacity
               onPress={finishEditing}
               style={styles.detailHeaderButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Text
                 style={[
@@ -380,12 +389,17 @@ export default function DiaryDetailScreen({
           // 预览模式
           <>
             <View style={styles.dateContainer}>
+              <CalendarIcon width={20} height={20} />
               <Text style={styles.dateText}>
                 {diary ? formatDateTime(diary.created_at) : ""}
               </Text>
             </View>
 
-            <TouchableOpacity onPress={closeSheet} style={styles.closeButton}>
+            <TouchableOpacity 
+              onPress={closeSheet} 
+              style={styles.closeButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <Ionicons name="close-outline" size={24} color="#666" />
             </TouchableOpacity>
           </>
@@ -578,6 +592,12 @@ export default function DiaryDetailScreen({
     const isChineseContent =
       detectTextLanguage(diary.polished_content || "") === "zh";
 
+    // ✅ 计算动态颜色 (描边与填充)
+    const emotionType = diary.emotion_data?.emotion as EmotionType;
+    const emotionConfig = emotionType && EMOTION_MAP[emotionType] ? EMOTION_MAP[emotionType] : DEFAULT_EMOTION;
+    const dynamicBorderColor = emotionConfig.color;
+    const dynamicBackgroundColor = `${dynamicBorderColor}4D`; // ✅ 30% 透明度 (Hex '4D' ≈ 30%)
+
     // 普通日记：显示文字内容
     return (
       <>
@@ -676,7 +696,14 @@ export default function DiaryDetailScreen({
         )}
 
         {/* 日记内容卡片 - 可编辑 */}
-        <View style={styles.diaryCard}>
+        <View style={[
+          styles.diaryCard, 
+          { 
+            borderColor: dynamicBorderColor,
+            backgroundColor: dynamicBackgroundColor // ✅ 添加动态背景填充
+          }
+        ]}>
+
           {/* 标题 */}
           {isEditingTitle ? (
             <TextInput
@@ -707,7 +734,7 @@ export default function DiaryDetailScreen({
               accessibilityHint={t("accessibility.button.editHint")}
               accessibilityRole="button"
             >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 8 }}>
                 <Text
                   style={[
                     styles.titleText,
@@ -726,14 +753,13 @@ export default function DiaryDetailScreen({
                   {diary.title}
                 </Text>
 
-                {/* ✅ 显示情绪标签 */}
-                {diary.emotion_data?.emotion && (
+                {/* ✅ 显示情绪标签 - 只要不是纯图片日记就强制显示（使用默认情绪） */}
+                {(diary.emotion_data?.emotion || !isImageOnlyDiary()) && (
                   <View style={{ marginTop: 2 }}>
                     <EmotionCapsule 
-                      emotion={diary.emotion_data.emotion}
-                      language={diary.language}
+                      emotion={diary.emotion_data?.emotion}
+                      language={diary.language || "en"}
                       content={diary.polished_content || diary.original_content}
-                      // size="small"
                     />
                   </View>
                 )}
@@ -784,7 +810,7 @@ export default function DiaryDetailScreen({
                       "regular"
                     ),
                     fontSize: isChineseContent ? 16 : 16, // ✅ 中文字号从 14 增加到 16
-                    lineHeight: isChineseContent ? 28 : 24, // ✅ 中文行高 28px
+                    lineHeight: isChineseContent ? 32 : 28, // ✅ 增加 4px 行高
                   },
                 ]}
               >
@@ -795,38 +821,11 @@ export default function DiaryDetailScreen({
         </View>
 
         {/* AI反馈 - 编辑时隐藏 */}
-        {!isEditingTitle && !isEditingContent && (
-          <View style={styles.feedbackCard}>
-            <View style={styles.feedbackHeader}>
-              <PreciousMomentsIcon width={20} height={20} />
-              <Text
-                style={[
-                  styles.feedbackTitle,
-                  {
-                    fontFamily: getFontFamilyForText(
-                      t("diary.aiFeedbackTitle"),
-                      "medium"
-                    ),
-                  },
-                ]}
-              >
-                {t("diary.aiFeedbackTitle")}
-              </Text>
-            </View>
-            <Text
-              style={[
-                styles.feedbackText,
-                {
-                  fontFamily: getFontFamilyForText(
-                    diary.ai_feedback,
-                    "regular"
-                  ),
-                },
-              ]}
-            >
-              {diary.ai_feedback}
-            </Text>
-          </View>
+        {!isEditingTitle && !isEditingContent && !!diary.ai_feedback && (
+          <AIFeedbackCard
+            aiFeedback={diary.ai_feedback}
+            style={styles.feedbackCard}
+          />
         )}
       </>
     );
@@ -1701,7 +1700,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
+    color: "#80645A", // 统一的时间颜色
   },
 
   // ===== 错误状态 =====
@@ -1722,7 +1721,7 @@ const styles = StyleSheet.create({
 
   errorText: {
     fontSize: 14,
-    color: "#666",
+    color: "#80645A", // 统一的时间颜色
     textAlign: "center",
     marginBottom: 24,
   },
@@ -1754,30 +1753,32 @@ const styles = StyleSheet.create({
   dateContainer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 4, // 图标和文字之间的间距
     flex: 1,
   },
 
   dateText: {
     ...Typography.caption,
-    color: "#666",
+    color: "#80645A", // 统一的时间颜色
   },
 
   // ===== 音频区域 =====
   audioSection: {
     marginHorizontal: 20,
-    marginBottom: 12, // ✅ 统一规则：间距由 marginBottom 控制
+    marginTop: 0, // ✅ 禁用 marginTop
+    marginBottom: 12, // ✅ 统一标准：语音距离下方内容 12px
   },
 
   // ===== 日记内容卡片 =====
   diaryCard: {
-    backgroundColor: "#FAF6ED", // 米白色卡片背景
+    backgroundColor: "#FFFFFF", // ✅ 纯白色卡片背景
     borderRadius: 12,
     padding: 16,
     marginHorizontal: 20,
     marginBottom: 12, // ✅ 统一规则：间距由 marginBottom 控制
-    //borderWidth: 1,
-    borderColor: "#E8E0D0",
+    borderWidth: 1,
+    borderColor: "#FFE3DA", // ✅ 温暖的桃色描边
+    overflow: "hidden", // ✅ 确保内部光晕不超出圆角
   },
 
   titleText: {
@@ -1785,7 +1786,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: "#1A1A1A",
     letterSpacing: -0.5,
-    marginBottom: 12,
+    marginBottom: 0, // ✅ 由外层容器 View 的 marginBottom 控制
   },
 
   contentText: {
@@ -1793,37 +1794,14 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     color: "#1A1A1A",
     letterSpacing: 0.2,
+    marginBottom: 0, // ✅ 移除底部间距，减少卡片底部空隙
   },
 
   // ===== AI反馈区域 - 与语音记录页保持一致 =====
   feedbackCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
     marginHorizontal: 20,
-    marginBottom: 12, // ✅ 统一规则：其他组件 marginBottom 为 12px
-    borderWidth: 1,
-    borderColor: "#FFECE5",
-  },
-
-  feedbackHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  feedbackTitle: {
-    ...Typography.sectionTitle,
-    fontSize: 16,
-    color: "#E56C45",
-    marginLeft: 8,
-  },
-
-  feedbackText: {
-    ...Typography.body,
-    fontSize: 15,
-    lineHeight: 22,
-    color: "#1A1A1A",
+    marginBottom: 12, // ✅ 统一标准：距离下方 12px
+    marginTop: 0,
   },
 
   // ===== 详情页Header =====
@@ -1847,7 +1825,11 @@ const styles = StyleSheet.create({
   detailHeaderButtonText: {
     ...Typography.body,
     fontSize: 17,
-    color: "#666",
+    color: "#80645A", // 统一的时间颜色
+  },
+  cancelText: {
+    fontSize: 15, // ✅ 缩小 cancel 文字大小
+    color: "#999", // ✅ 使用更浅的灰色
   },
   detailHeaderTitle: {
     ...Typography.sectionTitle,

@@ -17,6 +17,7 @@ import PreciousMomentsIcon from "../assets/icons/preciousMomentsIcon.svg";
 import EmptyStateIcon from "../assets/icons/empty-state.svg";
 import AppIconHomepage from "../assets/icons/app-icon-homepage.svg";
 import HamburgarMenuIcon from "../assets/icons/hamburgarMenu.svg";
+import CalendarIcon from "../assets/icons/calendarIcon.svg";
 import {
   Typography,
   getTypography,
@@ -1202,7 +1203,7 @@ export default function DiaryListScreen() {
           accessibilityRole="button"
           hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
         >
-          <HamburgarMenuIcon width={32} height={32} />
+          <HamburgarMenuIcon width={32} height={32} color="#80645A" />
         </TouchableOpacity>
       </View>
 
@@ -1304,11 +1305,30 @@ export default function DiaryListScreen() {
            style={[
              styles.sectionTitle,
              {
+               color: "#80645A", // 使用和时间一样的颜色
                fontFamily: getFontFamilyForText(t("home.myDiary"), "regular"),
              },
            ]}
          >
-           {t("home.myDiary")}
+           {t("home.myDiaryPrefix")}
+           {" "}
+           <Text
+             style={[
+               styles.sectionTitle,
+               {
+                 color: "#FF6B35",
+                 fontWeight: "bold",
+                 fontFamily: getFontFamilyForText(
+                   diaries.length.toString(),
+                   "bold"
+                 ),
+               },
+             ]}
+           >
+             {diaries.length}
+           </Text>
+           {" "}
+           {t("home.myDiarySuffix")}
          </Text>
        </View>
     </View>
@@ -1549,29 +1569,43 @@ export default function DiaryListScreen() {
             </>
           ) : (
             <>
-              {/* 标题 */}
-              {item.title && item.title.trim() !== "" && (
-                <View style={{ position: 'relative', paddingRight: item.emotion_data?.emotion ? 80 : 0, marginBottom: 8, zIndex: 10 }}>
-                  <Text
-                    style={[
-                      styles.cardTitle,
-                      {
-                        fontFamily: titleFontFamily,
-                        fontWeight: isChineseTitle ? "700" : "600",
-                        fontSize: isChineseTitle ? 18 : 18,
-                        lineHeight: isChineseTitle ? 26 : 24,
-                      },
-                    ]}
-                    numberOfLines={2}
-                  >
-                    {item.title}
-                  </Text>
-                  {/* ✅ 情绪标签 - 绝对定位在右上角 */}
-                  {item.emotion_data?.emotion && (
-                    <View style={{ position: 'absolute', top: 0, right: 0 }}>
+              {/* 标题行：包含标题和情绪标签 */}
+              {(item.title || item.emotion_data?.emotion || !isImageOnly) && (
+                <View style={{ 
+                  flexDirection: 'row', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'flex-start', // 标题可能有多行，顶部对齐
+                  marginBottom: 8, 
+                  zIndex: 10 
+                }}>
+                  {/* 标题 */}
+                  {item.title && item.title.trim() !== "" ? (
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text
+                        style={[
+                          styles.cardTitle,
+                          {
+                            fontFamily: titleFontFamily,
+                            fontWeight: isChineseTitle ? "700" : "600",
+                            fontSize: isChineseTitle ? 18 : 18,
+                            lineHeight: isChineseTitle ? 26 : 24,
+                          },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {item.title}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ flex: 1 }} /> // 无标题时占位
+                  )}
+
+                  {/* ✅ 情绪标签 - 只要不是纯图片日记就显示 */}
+                  {(item.emotion_data?.emotion || !isImageOnly) && (
+                    <View style={{ marginLeft: 8 }}>
                       <EmotionCapsule 
-                        emotion={item.emotion_data.emotion} 
-                        language={item.language}
+                        emotion={item.emotion_data?.emotion} 
+                        language={item.language || "en"}
                         content={item.polished_content || item.original_content}
                       />
                     </View>
@@ -1643,6 +1677,7 @@ export default function DiaryListScreen() {
           {/* 日期 + 三点菜单图标 - 移到底部 */}
           <View style={styles.cardFooter}>
             <View style={styles.dateContainer}>
+              <CalendarIcon width={20} height={20} />
               <Text
                 style={[
                   styles.cardDate,
@@ -2099,7 +2134,7 @@ const styles = StyleSheet.create({
   greetingLight: {
     ...Typography.caption,
     fontSize: 15,
-    color: "#666",
+    color: "#80645A", // ✅ 与日记列表标题颜色保持一致
   },
 
   menuButton: {
@@ -2149,7 +2184,7 @@ const styles = StyleSheet.create({
   cardContentContainer: {
     padding: 20,
     paddingTop: 20,
-    paddingBottom: 8,
+    paddingBottom: 20, // ✅ 时间部分距离底部的间距改为 20px
     zIndex: 1, // 确保内容在光晕之上
   },
 
@@ -2157,38 +2192,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 0, // ⬅️ 调整这里：控制时间区域距离上方内容的间距
-    paddingTop: 0, // ⬅️ 调整这里：控制时间区域内部的上间距
-    paddingBottom: 0, // ⬅️ 调整这里：控制时间区域内部的下间距
-    // 分割线已移除
+    marginTop: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    height: 20, // ✅ 与 20px 图标高度完全一致，消除垂直偏移
   },
 
   dateContainer: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 4, // 图标和文字之间的间距
   },
 
 
   cardDate: {
     ...Typography.caption,
-    color: "#666",
-    //marginLeft: 6,
+    color: "#80645A", // 统一的时间颜色
   },
 
   cardTitle: {
     ...Typography.diaryTitle,
     fontSize: 18,
     color: "#1A1A1A",
-    marginBottom: 8,
+    marginBottom: 0, // 间距由外层 View 的 marginBottom: 8 控制
   },
 
   optionsButton: {
-    paddingTop: 12,
-    paddingBottom: 12,
     paddingLeft: 12,
-    paddingRight: 0, // 右对齐，减少右边距
-    minWidth: 44,
-    minHeight: 44,
+    paddingRight: 0,
+    minWidth: 32,
+    height: 20, // ✅ 与页脚高度一致
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2196,15 +2229,15 @@ const styles = StyleSheet.create({
   cardContent: {
     ...Typography.body,
     color: "#1A1A1A",
-    marginBottom: 0, // 图片区域统一用 imageGrid 的上边距控制
-    textAlign: "left", // ✅ 左对齐，改善中文标点符号显示
+    marginBottom: 12, // ✅ 统一标准：文字距离下方内容 12px
+    textAlign: "left",
   },
 
   // 图片网格样式
   imageGrid: {
     flexDirection: "row",
-    marginTop: 8, // ✅ 与两张图的视觉间距对齐
-    marginBottom: 4,
+    marginTop: 0, // ✅ 禁用 marginTop
+    marginBottom: 12, // ✅ 统一标准：图片距离下方内容 12px
     gap: 8,
   },
   imageThumbnail: {
@@ -2230,8 +2263,9 @@ const styles = StyleSheet.create({
   },
   moreText: {
     color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 18, 
+    fontWeight: "800", // ✅ 加重字重
+    letterSpacing: 2, // ✅ 通过字间距控制加号与数字的距离
   },
 
   aiFeedbackContainer: {
@@ -2335,12 +2369,11 @@ const styles = StyleSheet.create({
 
   // ===== 音频播放器样式（使用统一组件）=====
   audioButton: {
-    marginTop: 8,
-    marginBottom: 0,
+    marginTop: 0, // ✅ 禁用 marginTop
+    marginBottom: 12, // ✅ 统一标准：语音距离下方内容 12px
   },
   imageGridWithAudio: {
-    marginTop: 8,
-    marginBottom: 8,
+    // 移除所有 margin 覆盖，使用基础样式
   },
 
   // ===== 自定义 Action Sheet =====

@@ -17,16 +17,25 @@ import { Typography, getFontFamilyForText } from "../styles/typography";
 import { t } from "../i18n";
 
 import { EmotionCapsule } from "./EmotionCapsule";
+import { AIFeedbackCard } from "./AIFeedbackCard";
 import { EmotionData } from "../types/emotion";
 
 interface DiaryResultViewProps {
   title: string;
   polishedContent: string;
   aiFeedback: string;
-  emotionData?: EmotionData; // ✅ 新增
-  isEditing: boolean;
+  emotionData?: EmotionData;
+  language?: string; // ✅ 新增：日记语言
+  
+  // 编辑相关
+  isEditingTitle?: boolean;
+  isEditingContent: boolean;
+  editedTitle?: string;
   editedContent: string;
-  onStartEditing: () => void;
+  
+  onStartTitleEditing?: () => void;
+  onStartContentEditing: () => void;
+  onTitleChange?: (text: string) => void;
   onContentChange: (text: string) => void;
 }
 
@@ -35,53 +44,83 @@ export default function DiaryResultView({
   polishedContent,
   aiFeedback,
   emotionData,
-  isEditing,
+  language = "zh",
+  isEditingTitle,
+  isEditingContent,
+  editedTitle,
   editedContent,
-  onStartEditing,
+  onStartTitleEditing,
+  onStartContentEditing,
+  onTitleChange,
   onContentChange,
 }: DiaryResultViewProps) {
-  // 获取当前语言环境，传给 EmotionCapsule
-  const currentLanguage = t("common.save") === "Save" ? "en" : "zh";
-
   return (
     <>
       {/* 标题和内容卡片 */}
       <View style={styles.resultDiaryCard}>
         {/* 标题 + 情绪标签 */}
-        {!!title && !isEditing && (
-          <View style={styles.titleRow}>
-            <Text
-              style={[
-                styles.resultTitleText,
-                {
-                  fontFamily: getFontFamilyForText(title, "bold"),
-                  flex: 1, // 让标题占据剩余空间
-                  marginBottom: 0, // 布局由 titleRow 控制
-                },
-              ]}
-            >
-              {title}
-            </Text>
-            {/* ✅ 显示情绪标签 */}
-            {emotionData?.emotion && (
-              <View style={{ marginLeft: 8 }}>
-                <EmotionCapsule
-                  emotion={emotionData.emotion}
-                  language={currentLanguage}
-                  content={polishedContent}
-                />
-              </View>
+        <View style={styles.titleRow}>
+          <View style={styles.resultTitleContainer}>
+            {isEditingTitle ? (
+              <TextInput
+                style={[
+                  styles.editTitleInput,
+                  {
+                    fontFamily: getFontFamilyForText(editedTitle || title, "bold"),
+                  },
+                ]}
+                value={editedTitle}
+                onChangeText={onTitleChange}
+                autoFocus
+                multiline
+                placeholder={t("diary.placeholderTitle")}
+                scrollEnabled={false}
+                accessibilityLabel={t("diary.placeholderTitle")}
+                accessibilityHint={t("accessibility.input.textHint")}
+                accessibilityRole="text"
+              />
+            ) : (
+              <TouchableOpacity
+                onPress={onStartTitleEditing}
+                activeOpacity={0.7}
+                disabled={!onStartTitleEditing}
+                accessibilityLabel={title}
+                accessibilityHint={t("accessibility.button.editHint")}
+                accessibilityRole="button"
+              >
+                <Text
+                  style={[
+                    styles.resultTitleText,
+                    {
+                      fontFamily: getFontFamilyForText(title, "bold"),
+                    },
+                  ]}
+                >
+                  {title}
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
-        )}
+
+          {/* ✅ 显示情绪标签 - 只要不是纯图片日记（有标题或内容）就显示 */}
+          {(emotionData?.emotion || !!title || !!polishedContent) && (
+            <View style={{ marginTop: 2 }}>
+              <EmotionCapsule
+                emotion={emotionData?.emotion}
+                language={language || "en"}
+                content={polishedContent}
+              />
+            </View>
+          )}
+        </View>
 
         {/* 内容 - 可点击编辑 */}
-        {isEditing ? (
+        {isEditingContent ? (
           <TextInput
             style={[
               styles.editContentInput,
               {
-                fontFamily: getFontFamilyForText(editedContent, "regular"),
+                fontFamily: getFontFamilyForText(editedContent || polishedContent, "regular"),
               },
             ]}
             value={editedContent}
@@ -95,7 +134,7 @@ export default function DiaryResultView({
           />
         ) : (
           <TouchableOpacity
-            onPress={onStartEditing}
+            onPress={onStartContentEditing}
             activeOpacity={0.7}
             accessibilityLabel={polishedContent.substring(0, 100) + (polishedContent.length > 100 ? "..." : "")}
             accessibilityHint={t("accessibility.button.editHint")}
@@ -116,33 +155,11 @@ export default function DiaryResultView({
       </View>
 
       {/* AI反馈 - 编辑时隐藏 */}
-      {!isEditing && !!aiFeedback && (
-        <View style={styles.resultFeedbackCard}>
-          <View style={styles.resultFeedbackHeader}>
-            <PreciousMomentsIcon width={20} height={20} />
-            <Text
-              style={[
-                styles.resultFeedbackTitle,
-                {
-                  fontFamily: getFontFamilyForText(
-                    t("diary.aiFeedbackTitle"),
-                    "medium"
-                  ),
-                },
-              ]}
-            >
-              {t("diary.aiFeedbackTitle")}
-            </Text>
-          </View>
-          <Text
-            style={[
-              styles.resultFeedbackText,
-              { fontFamily: getFontFamilyForText(aiFeedback, "regular") },
-            ]}
-          >
-            {aiFeedback}
-          </Text>
-        </View>
+      {!isEditingTitle && !isEditingContent && !!aiFeedback && (
+        <AIFeedbackCard 
+          aiFeedback={aiFeedback} 
+          style={styles.resultFeedbackCard}
+        />
       )}
     </>
   );
@@ -151,33 +168,51 @@ export default function DiaryResultView({
 const styles = StyleSheet.create({
   // ===== 日记卡片 =====
   resultDiaryCard: {
-    backgroundColor: "#FAF6ED",
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
-    marginHorizontal: 0, // ✅ 外层 ScrollView 已经有 paddingHorizontal: 20
+    marginHorizontal: 0,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#FFE3DA", // ✅ 温暖的桃色描边，与详情页保持一致
   },
 
   // ✅ 新增：标题行布局
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 12,
+  },
+
+  resultTitleContainer: {
+    flex: 1,
+    marginRight: 8, // ✅ 标题与标签之间的间距设为 8px
   },
 
   resultTitleText: {
     ...Typography.diaryTitle,
-    fontSize: 16,
+    fontSize: 18,
     color: "#1A1A1A",
     letterSpacing: -0.5,
-    // marginBottom: 12, // ✅ 移至 titleRow 控制
+  },
+
+  editTitleInput: {
+    ...Typography.diaryTitle,
+    color: "#1A1A1A",
+    borderWidth: 1,
+    borderColor: "#E56C45",
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: "#fff",
   },
 
   resultContentText: {
     ...Typography.body,
-    lineHeight: 26,
+    lineHeight: 30, // ✅ 增加 4px 行高 (从 26 增加到 30)
     color: "#1A1A1A",
     letterSpacing: 0.2,
+    marginBottom: 0, // ✅ 移除底部间距
   },
 
   editContentInput: {
@@ -195,32 +230,8 @@ const styles = StyleSheet.create({
 
   // ===== AI反馈卡片 =====
   resultFeedbackCard: {
-    backgroundColor: "#F8F9FA",
-    borderRadius: 12,
-    padding: 16,
     marginHorizontal: 0, // ✅ 外层 ScrollView 已经有 paddingHorizontal: 20
     marginBottom: 20,
-  },
-
-  resultFeedbackHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  resultFeedbackTitle: {
-    ...Typography.sectionTitle,
-    fontSize: 16,
-    color: "#E56C45",
-    marginLeft: 8,
-  },
-
-  resultFeedbackText: {
-    ...Typography.body,
-    fontSize: 15,
-    lineHeight: 28, // ✅ 增大行高，让中文内容不那么密集（从22增加到28）
-    letterSpacing: 0.3, // ✅ 增加字间距，让阅读更舒适
-    color: "#1A1A1A",
   },
 });
 

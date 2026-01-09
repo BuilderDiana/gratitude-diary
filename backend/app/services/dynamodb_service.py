@@ -118,68 +118,85 @@ class DynamoDBService:
             raise
     def get_user_diaries(
         self,
-        user_id: str,
-        limit: int = 20
+        user_id: str
     ) -> List[dict]:
         """
-        获取用户的日记列表
+        获取用户的所有日记列表（无数量限制）
         
         参数:
             user_id: 用户ID
-            limit: 返回数量
         
         返回:
-            日记列表
+            所有日记列表
         """
         try:
-            print(f"🔍 DynamoDB查询 - 表名: {self.table.table_name}, 用户ID: {user_id}, limit: {limit}")
+            print(f"🔍 DynamoDB查询 - 表名: {self.table.table_name}, 用户ID: {user_id}, 查询所有日记")
             
             # 验证用户ID
             if not user_id or not user_id.strip():
                 raise ValueError("用户ID不能为空")
             
-            # 查询该用户的所有日记
-            response = self.table.query(
-                KeyConditionExpression=Key('userId').eq(user_id),
-                ScanIndexForward=False,  # 倒序排列(最新的在前)
-                Limit=limit
-            )
-            
-            print(f"📊 DynamoDB响应 - 返回项目数: {len(response.get('Items', []))}")
-            
-            # 转换格式
+            # 查询该用户的所有日记（使用分页循环）
             diaries = []
-            for item in response.get('Items', []):
-                item_type = item.get('itemType', 'diary').lower()
-                if item_type != 'diary':
-                    continue
-
-                diary_id = item.get('diaryId')
-                if not diary_id or str(diary_id).lower() == 'unknown':
-                    # ⚠️ 非日记数据或历史异常数据（无有效 diaryId），直接跳过
-                    print(f"⚠️ 跳过无效日记记录: {item.get('diaryId')} {item.get('itemType')}")
-                    continue
-
-                if 'originalContent' not in item and 'polishedContent' not in item:
-                    continue
-
-                diaries.append({
-                    'diary_id': diary_id,
-                    'user_id': item.get('userId', ''),
-                    'created_at': item.get('createdAt', ''),
-                    'date': item.get('date', ''),
-                    'language': item.get('language', 'zh'),      # ← 新增：语言
-                    'title': item.get('title', '日记'),           # ← 新增：标题
-                    'original_content': item.get('originalContent', ''),
-                    'polished_content': item.get('polishedContent', ''),
-                    'ai_feedback': item.get('aiFeedback', ''),
-                    'audio_url': item.get('audioUrl'),
-                    'audio_duration': item.get('audioDuration'),
-                    'image_urls': item.get('imageUrls'),
-                    'emotion_data': item.get('emotionData') # ✅ 获取情感数据
-                })
+            last_evaluated_key = None
             
-            print(f"✅ DynamoDB查询成功 - 转换后日记数: {len(diaries)}")
+            while True:
+                # 构建查询参数
+                query_params = {
+                    'KeyConditionExpression': Key('userId').eq(user_id),
+                    'ScanIndexForward': False  # 倒序排列(最新的在前)
+                }
+                
+                # 如果有分页键,添加到查询参数
+                if last_evaluated_key:
+                    query_params['ExclusiveStartKey'] = last_evaluated_key
+                
+                # 执行查询
+                response = self.table.query(**query_params)
+                
+                # 处理当前批次的数据
+                items = response.get('Items', [])
+                print(f"📊 DynamoDB响应 - 当前批次返回: {len(items)} 条")
+                
+                for item in items:
+                    item_type = item.get('itemType', 'diary').lower()
+                    if item_type != 'diary':
+                        continue
+
+                    diary_id = item.get('diaryId')
+                    if not diary_id or str(diary_id).lower() == 'unknown':
+                        # ⚠️ 非日记数据或历史异常数据（无有效 diaryId），直接跳过
+                        print(f"⚠️ 跳过无效日记记录: {item.get('diaryId')} {item.get('itemType')}")
+                        continue
+
+                    if 'originalContent' not in item and 'polishedContent' not in item:
+                        continue
+
+                    diaries.append({
+                        'diary_id': diary_id,
+                        'user_id': item.get('userId', ''),
+                        'created_at': item.get('createdAt', ''),
+                        'date': item.get('date', ''),
+                        'language': item.get('language', 'zh'),
+                        'title': item.get('title', '日记'),
+                        'original_content': item.get('originalContent', ''),
+                        'polished_content': item.get('polishedContent', ''),
+                        'ai_feedback': item.get('aiFeedback', ''),
+                        'audio_url': item.get('audioUrl'),
+                        'audio_duration': item.get('audioDuration'),
+                        'image_urls': item.get('imageUrls'),
+                        'emotion_data': item.get('emotionData')
+                    })
+                
+                # 检查是否还有更多数据
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    # 没有更多数据了,退出循环
+                    break
+                
+                print(f"📄 继续查询下一页...")
+            
+            print(f"✅ DynamoDB查询成功 - 总共获取: {len(diaries)} 条日记")
             return diaries
         except Exception as e:
             import traceback

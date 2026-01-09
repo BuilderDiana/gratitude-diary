@@ -695,9 +695,11 @@ export default function TextInputModal({
                   polishedContent={polishedContent}
                   aiFeedback={aiFeedback}
                   emotionData={emotionData} // ✅ 传递情绪数据
-                  isEditing={isEditing}
+                  language={t("common.save") === "Save" ? "en" : "zh"}
+                  isEditingTitle={false} // TextInputModal 暂时不支持编辑标题，保持一致
+                  isEditingContent={isEditing}
                   editedContent={editedContent}
-                  onStartEditing={startEditing}
+                  onStartContentEditing={startEditing}
                   onContentChange={(text) => {
                     setEditedContent(text);
                     setHasChanges(text !== polishedContent);

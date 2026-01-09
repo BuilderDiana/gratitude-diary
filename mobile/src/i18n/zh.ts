@@ -122,6 +122,8 @@ export default {
     welcome: "Hi {name}",
     subtitle: "今天，有什么想感谢的，\n或想留下些什么吗？",
     myDiary: "我珍藏的片刻",
+    myDiaryPrefix: "我",
+    myDiarySuffix: "珍藏的片刻",
     noDiaries: "要不要暂停一下，记录今天？开启属于你的故事",
     refreshing: "刷新中...",
     signOut: "退出登录",
