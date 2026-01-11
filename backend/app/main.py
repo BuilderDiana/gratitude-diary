@@ -137,10 +137,11 @@ async def health_check():
         except Exception as e:
             config_status = f"config_error: {str(e)}"
         
+        from datetime import timezone
         return {
             "status": "healthy",
             "config": config_status,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     except Exception as e:
         print(f"❌ 健康检查失败: {str(e)}")

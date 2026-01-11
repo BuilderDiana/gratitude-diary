@@ -35,12 +35,10 @@ export default function WelcomeScreen() {
   const typography = getTypography();
 
   const handlePrivacyPress = () => {
-    // TODO: 导航到隐私政策页面
     navigation.navigate("PrivacyPolicy" as any);
   };
 
   const handleTermsPress = () => {
-    // TODO: 导航到服务条款页面
     navigation.navigate("TermsOfService" as any);
   };
 
@@ -143,10 +141,10 @@ export default function WelcomeScreen() {
             {getCurrentLocale() === "zh" ? (
               <>
                 这里是
-                <Text style={{ fontWeight: "700" }}>「感记」</Text>
+                <Text style={{ fontWeight: "700", color: "#E56C45" }}>「感记」</Text>
               </>
             ) : (
-              t("onboarding.welcome.title")
+              <>This is <Text style={{ fontWeight: "700", color: "#E56C45" }}>thankly</Text></>
             )}
           </Text>
           <Text style={[styles.subtitle, typography.body]}>

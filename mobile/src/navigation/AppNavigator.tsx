@@ -219,6 +219,18 @@ export default function AppNavigator() {
         {/* 主要功能页面 */}
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="MainDrawer" component={MainDrawer} />
+        
+        {/* 法律页面 - 可从任何地方访问 */}
+        <Stack.Screen
+          name="PrivacyPolicy"
+          component={PrivacyPolicyScreen}
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="TermsOfService"
+          component={TermsOfServiceScreen}
+          options={{ presentation: "modal" }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

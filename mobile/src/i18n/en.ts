@@ -29,7 +29,7 @@ export default {
   // Onboarding流程
   onboarding: {
     welcome: {
-      title: "This is Thankly",
+      title: "This is thankly",
       subtitle: "Press pause on a busy life, and let your voice keep what matters.",
       privacyNotice:
         "Read our {{privacyPolicy}}. Tap 'Agree & Continue' to accept the {{termsOfService}}.",
@@ -129,7 +129,8 @@ export default {
     myDiary: "My precious moments",
     myDiaryPrefix: "My",
     myDiarySuffix: "precious moments",
-    noDiaries: "Ready to pause and capture your day? Your story begins here",
+    noDiaries: "Ready to pause and capture your day?",
+    emptySubtitle: "Tap below to capture your first precious moment",
     refreshing: "Refreshing...",
     signOut: "Sign out",
     copySuccess: "Copied",
@@ -469,7 +470,7 @@ export default {
     effectiveDateLabel: "Effective Date",
     effectiveDateValue: "November 5, 2025",
     lastUpdatedLabel: "Last Updated",
-    lastUpdatedValue: "November 5, 2025",
+    lastUpdatedValue: "January 11, 2026",
     intro: [
       'thankly ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use the thankly mobile application (the "App") and related services (collectively, the "Services").',
       "Please read this Privacy Policy carefully. By using the App, you agree to the collection and use of information in accordance with this policy. If you do not agree with our policies and practices, do not download, register with, or use the App.",
@@ -490,6 +491,7 @@ export default {
               "• Voice recordings",
               "• Text entries",
               "• Diary notes and journal content",
+              "• Photos and images (uploaded from your photo library or camera)",
               "Third-Party Authentication:",
               "When you sign in using Apple ID or Google Account, we receive basic profile information from these services (see Section 1.2).",
             ],
@@ -514,16 +516,13 @@ export default {
               "• Authentication tokens (Access Token, ID Token, Refresh Token) to maintain your login session",
               "AWS S3 (Cloud Storage Service):",
               "• Audio files (your voice diary recordings)",
-              "• Purpose: Securely store your voice recordings",
+              "• Image files (photos you add to diary entries)",
+              "• Purpose: Securely store your recordings and photos",
               "OpenAI (AI Service Provider):",
               "• Audio content: When you use voice diary features, audio is sent to OpenAI Whisper for speech-to-text transcription",
               "• Text content: When you create diary entries, text is sent to OpenAI for AI polishing and title generation",
-              "• Purpose: Provide voice-to-text transcription, text polishing, and title generation features",
+              "• Purpose: Provide transcription, text polishing, and title generation",
               "• Privacy: We comply with OpenAI's privacy policy",
-              "AWS Bedrock (AI Service Provider):",
-              "• Text content: When you create diary entries, your content is sent to AWS Bedrock (Claude Sonnet) for AI feedback generation",
-              "• Purpose: Provide personalized, warm diary feedback",
-              "• Privacy: We comply with AWS privacy policy",
             ],
           },
           {
@@ -548,6 +547,21 @@ export default {
               "• Advertising tracking identifiers",
             ],
           },
+          {
+            title: "1.4 Permissions We Request",
+            body: [
+              "To provide our services, we may request the following permissions:",
+              "Camera Permission:",
+              "• Purpose: Allow you to take photos directly for your diary entries",
+              "• Optional: You can decline and still use voice/text features",
+              "Photo Library Permission:",
+              "• Purpose: Allow you to select existing photos for your diary entries",
+              "• Optional: You can decline and still use voice/text features",
+              "Notification Permission:",
+              "• Purpose: Send you daily reminders to record your moments",
+              "• Optional: You can disable notifications in settings at any time",
+            ],
+          },
         ],
       },
       {
@@ -558,8 +572,8 @@ export default {
             title: "2.1 Provide and Maintain Services",
             body: [
               "• Create and manage your account",
-              "• Store and synchronize your diary entries across devices",
-              "• Process voice recordings into text (using AI services)",
+              "• Store and synchronize your diary entries (text, voice, and photos) across devices",
+              "• Process voice recordings using AI to generate titles and content",
               "• Enable cloud backup and restore",
               "• Provide customer support",
             ],
@@ -879,7 +893,7 @@ export default {
     effectiveDateLabel: "Effective Date",
     effectiveDateValue: "November 5, 2025",
     lastUpdatedLabel: "Last Updated",
-    lastUpdatedValue: "November 5, 2025",
+    lastUpdatedValue: "January 11, 2026",
     applicability: "Applicable Worldwide",
     intro: [
       "Welcome to thankly!",
@@ -907,9 +921,9 @@ export default {
           {
             title: "Core Experience",
             body: [
-              "• thankly is a voice-first journaling application.",
-              "• You can record voice or text diary entries and store personal reflections.",
-              "• AI-powered features provide transcription, text polishing, title generation, and personalized feedback.",
+              "• thankly is a voice and image-first journaling application.",
+              "• You can record voice, text, or photo diary entries and store personal reflections.",
+              "• AI-powered features provide transcription, text polishing, title generation, image understanding, and personalized feedback.",
               "• Cloud storage keeps your content in sync across devices.",
               '• Services are provided "as is" and features may change or be discontinued at any time.',
             ],
@@ -951,14 +965,14 @@ export default {
           {
             title: "Ownership",
             body: [
-              "• You retain ownership of voice recordings, text entries, diary notes, and reflections you create.",
+              "• You retain ownership of voice recordings, text entries, photos, diary notes, and reflections you create.",
             ],
           },
           {
             title: "License to thankly",
             body: [
               "• You grant us a limited, non-exclusive license to store and process your content to deliver the Services.",
-              "• We may use AI services (OpenAI, AWS Bedrock) to transcribe, polish, and generate feedback.",
+              "• We may use AI services (OpenAI, AWS Bedrock) to transcribe, polish, analyze images, and generate feedback.",
               "• We back up content for data protection. The license ends when you delete content or your account.",
             ],
           },

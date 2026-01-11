@@ -1308,8 +1308,8 @@ export default function DiaryListScreen() {
         </View>
       </View>
 
-      {/* 分割线 - 只在有日记时显示 */}
-      {diaries.length > 0 && <View style={styles.divider} />}
+      {/* 分割线 - 始终显示，作为顶部区域的结尾 */}
+      <View style={styles.divider} />
 
       {/* 我的日记标题 - 只在有至少一条日记时显示 */}
       {diaries.length > 0 && (
@@ -1721,13 +1721,23 @@ export default function DiaryListScreen() {
       </View>
       <Text
         style={[
-          styles.emptyText,
+          styles.emptyTitle,
           {
-            fontFamily: getFontFamilyForText(t("home.noDiaries"), "regular"),
+            fontFamily: getFontFamilyForText(t("home.noDiaries"), "bold"),
           },
         ]}
       >
         {t("home.noDiaries")}
+      </Text>
+      <Text
+        style={[
+          styles.emptySubtitle,
+          {
+            fontFamily: getFontFamilyForText(t("home.emptySubtitle"), "regular"),
+          },
+        ]}
+      >
+        {t("home.emptySubtitle")}
       </Text>
     </View>
   );
@@ -2222,7 +2232,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 80,
-    paddingHorizontal: 64,
+    paddingHorizontal: 20, // 进一步放宽宽度
     marginTop: 40,
   },
 
@@ -2232,12 +2242,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  emptyText: {
-    ...Typography.caption,
-    fontSize: 16,
-    color: "#666",
+  emptyTitle: {
+    color: "#1A1A1A",
+    fontSize: 15,
     textAlign: "center",
-    lineHeight: 24,
+    marginBottom: 6,
+    lineHeight: 22,
+  },
+
+  emptySubtitle: {
+    fontSize: 15,
+    color: "#80645A", // 与顶部描述文字颜色一致
+    textAlign: "center",
+    lineHeight: 22,
+    paddingHorizontal: 40, // 增加内边距，引导下方文字进行合理的折行，增加层次感
   },
 
   // ===== 创建按钮 =====
