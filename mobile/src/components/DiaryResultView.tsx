@@ -78,10 +78,10 @@ export default function DiaryResultView({
         style={styles.resultDiaryCardOverride}
       />
 
-      {/* AI反馈 - 编辑时隐藏 */}
+      {/* AI反馈 - 编辑时彻底隐藏以实现“只出现编辑框”，同时腾出滚动空间 */}
       {!isEditingTitle && !isEditingContent && !!aiFeedback && (
-        <AIFeedbackCard 
-          aiFeedback={aiFeedback} 
+        <AIFeedbackCard
+          aiFeedback={aiFeedback}
           style={styles.resultFeedbackCard}
         />
       )}

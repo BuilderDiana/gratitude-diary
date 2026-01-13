@@ -37,20 +37,64 @@ s3_service = S3Service()
 # 任务进度存储（内存存储，生产环境建议使用Redis）
 # ============================================================================
 
-# 任务进度字典：{task_id: {status, progress, step, step_name, message, diary, error}}
-task_progress: Dict[str, Dict] = {}
+# ✅ 全局任务状态（改为仅用于局部缓存，实际存储使用 DynamoDB）
+# 这是为了解决 Lambda 多实例导致内存不冲突、任务 404 的问题
+task_progress = {}
+
+def get_display_name(user: Dict, request: Request = None) -> Optional[str]:
+    """
+    统一获取用户显示名称的逻辑
+    1. 优先从请求头获取（前端传递的最新名字）
+    2. 如果请求头没有，从 token 获取
+    """
+    user_name = ""
+    # 1. 优先从请求头获取
+    if request:
+        header_name = request.headers.get("X-User-Name", "").strip()
+        if header_name:
+            user_name = header_name
+            # print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
+            
+    # 2. 如果请求头没有，从 token 获取
+    if not user_name and user:
+        user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
+        
+    if not user_name:
+        return None
+        
+    # 3. 提取第一个名字 (去掉空格后的部分)
+    display_name = re.split(r'\s+', user_name)[0]
+    return display_name
+
+def get_user_language(request: Optional[Request] = None) -> str:
+    """从请求头检测用户语言，默认为 Chinese"""
+    user_language = "Chinese"
+    if request:
+        accept_lang = request.headers.get("Accept-Language", "").lower()
+        if "en" in accept_lang and "zh" not in accept_lang:
+            user_language = "English"
+        # 也支持 X-User-Language 自定义 Header
+        custom_lang = request.headers.get("X-User-Language", "").strip().capitalize()
+        if custom_lang in ["Chinese", "English"]:
+            user_language = custom_lang
+    return user_language
 
 def cleanup_old_tasks():
     """清理超过1小时的任务（防止内存泄漏）"""
     current_time = datetime.now(timezone.utc)
     expired_tasks = []
     for task_id, task_data in task_progress.items():
-        if task_data.get("status") in ["completed", "failed"]:
-            created_at = task_data.get("created_at")
-            if created_at:
+        created_at_str = task_data.get("created_at")
+        if created_at_str:
+            try:
+                # 将 ISO 格式字符串转换回 datetime 对象
+                created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
                 age = (current_time - created_at).total_seconds()
                 if age > 3600:  # 1小时
                     expired_tasks.append(task_id)
+            except (ValueError, TypeError):
+                # 如果时间格式异常，也标记为过期以便清理
+                expired_tasks.append(task_id)
     for task_id in expired_tasks:
         task_progress.pop(task_id, None)
 
@@ -58,6 +102,49 @@ def cleanup_old_tasks():
 def get_openai_service():
     """获取 OpenAI 服务实例（延迟初始化）"""
     return OpenAIService()
+
+def get_emotion_service():
+    """获取 EmotionService 实例（延迟初始化）"""
+    return EmotionService()
+
+def update_task_progress(task_id: str, status: str, progress: int = 0, 
+                        step: int = 0, step_name: str = "", message: str = "",
+                        diary: Optional[Dict] = None, error: Optional[str] = None,
+                        user_id: str = "TASK_SYSTEM"):
+    """更新任务进度，并保存到 DynamoDB"""
+    # 从 DynamoDB 获取最新任务状态
+    current_task_data = db_service.get_task_progress(task_id, user_id=user_id)
+    if not current_task_data:
+        # 如果 DynamoDB 中没有，则从内存中获取（可能是刚创建的任务）
+        current_task_data = task_progress.get(task_id, {
+            "status": "processing",
+            "progress": 0,
+            "step": 0,
+            "step_name": "",
+            "message": "",
+            "user_id": user_id,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    
+    current_task_data.update({
+        "status": status,
+        "progress": progress,
+        "step": step,
+        "step_name": step_name,
+        "message": message,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    if diary:
+        current_task_data["diary"] = diary
+    if error:
+        current_task_data["error"] = error
+
+    # 保存到 DynamoDB
+    db_service.save_task_progress(task_id, current_task_data, user_id=user_id)
+    
+    # 同时更新内存缓存
+    task_progress[task_id] = current_task_data
 
 
 # ============================================================================
@@ -83,25 +170,8 @@ async def create_text_diary(
         # ✅ 修复：添加 await
         print(f"✨ 开始处理文字日记...")
         # 获取用户名字用于个性化反馈
-        import re
-        
-        user_name = ""
-        # 1. 优先从请求头获取（前端传递的最新名字）
-        if request:
-            header_name = request.headers.get("X-User-Name", "").strip()
-            if header_name:
-                user_name = header_name
-                print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
-        
-        # 2. 如果请求头没有，从 token 获取
-        if not user_name:
-            user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
-            
-        if not user_name:
-            user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-
-        user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
-        print(f"👤 用户信息: user_id={user.get('user_id')}, name={user.get('name')}, display_name={user_display_name}")
+        user_display_name = get_display_name(user, request)
+        print(f"👤 用户信息: user_id={user.get('user_id')}, display_name={user_display_name}")
         ai_result = await openai_service.polish_content_multilingual(diary.content, user_name=user_display_name)
         print(f"✅ AI 处理完成 - 标题: {ai_result['title']}")
         
@@ -171,7 +241,8 @@ async def create_voice_diary(
             )
         
         audio_content = await audio.read()
-        validate_audio_quality(duration, len(audio_content))
+        user_lang = get_user_language(request)
+        validate_audio_quality(duration, len(audio_content), language=user_lang)
         
         # ============================================
         # Step 2: 并行处理（提升速度）
@@ -215,26 +286,7 @@ async def create_voice_diary(
         # ============================================
         print(f"✨ 开始 AI 处理...")
         # 获取用户名字用于个性化反馈
-        # ✅ 优先从 user dict 获取，如果没有则尝试从请求头获取（备用方案）
-        import re
-        
-        user_name = ""
-        # 1. 优先从请求头获取（前端传递的最新名字）
-        if request:
-            header_name = request.headers.get("X-User-Name", "").strip()
-            if header_name:
-                user_name = header_name
-                print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
-
-        # 2. 如果请求头没有，从 token 获取
-        if not user_name:
-            user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
-        
-        if not user_name:
-            user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-        
-        # 提取名字（取第一个词）
-        user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
+        user_display_name = get_display_name(user, request)
         
         print(f"👤 用户信息提取:")
         print(f"   user_id: {user.get('user_id')}")
@@ -322,35 +374,6 @@ async def send_sse_event(event_type: str, data: Dict) -> str:
     return f"{event_line}data: {data_json}\n\n"
 
 
-def update_task_progress(task_id: str, status: str, progress: int = 0, 
-                        step: int = 0, step_name: str = "", message: str = "",
-                        diary: Optional[Dict] = None, error: Optional[str] = None):
-    """更新任务进度"""
-    if task_id not in task_progress:
-        task_progress[task_id] = {
-            "status": "processing",
-            "progress": 0,
-            "step": 0,
-            "step_name": "",
-            "message": "",
-            "created_at": datetime.now(timezone.utc)
-        }
-    
-    task_progress[task_id].update({
-        "status": status,
-        "progress": progress,
-        "step": step,
-        "step_name": step_name,
-        "message": message,
-        "updated_at": datetime.now(timezone.utc)
-    })
-    
-    if diary:
-        task_progress[task_id]["diary"] = diary
-    if error:
-        task_progress[task_id]["error"] = error
-
-
 async def process_pure_voice_diary_async(
     task_id: str,
     audio_content: bytes,
@@ -377,19 +400,20 @@ async def process_pure_voice_diary_async(
         # Step 0: 初始化 (5% → 10%)
         # ============================================
         # ✅ 任务已在创建时设置为5%，这里快速更新到8%
-        update_task_progress(task_id, "processing", 8, 0, "验证中", "正在验证音频...")
+        update_task_progress(task_id, "processing", 8, 0, "验证中", "正在验证音频...", user_id=user['user_id'])
         
         # 验证音频质量
-        validate_audio_quality(duration, len(audio_content))
+        user_lang = get_user_language(request)
+        validate_audio_quality(duration, len(audio_content), language=user_lang)
         
         # ✅ 验证完成，立即更新到10%
-        update_task_progress(task_id, "processing", 10, 0, "准备上传", "准备上传音频...")
+        update_task_progress(task_id, "processing", 10, 0, "准备上传", "准备上传音频...", user_id=user['user_id'])
         await asyncio.sleep(0.1)  # 短暂延迟，让前端看到进度变化
         
         # ============================================
         # Step 1: 并行处理 S3 上传 + 语音转文字 (10% → 50%)
         # ============================================
-        update_task_progress(task_id, "processing", 15, 1, "上传中", "正在上传并识别语音...")
+        update_task_progress(task_id, "processing", 15, 1, "上传中", "正在努力识别你的声音...", user_id=user['user_id'])
         
         async def upload_to_s3_async():
             return await asyncio.to_thread(
@@ -399,20 +423,33 @@ async def process_pure_voice_diary_async(
                 content_type=audio_content_type
             )
         
-        async def transcribe_async():
-            return await openai_service.transcribe_audio(
-                audio_content,
-                audio_filename,
-                expected_duration=duration
-            )
-        
+        # 🚀 优化：增加虚拟进度，防止转录期间卡死
+        async def transcribe_with_progress():
+            # 开启一个后台协程，每2.5秒提升一点进度，增加“呼吸感”
+            async def smooth_progress():
+                current_p = 15
+                while current_p < 48:
+                    await asyncio.sleep(2.5)
+                    current_p += 3 # 纯语音模式步进大一点，因为它是主进度
+                    update_task_progress(task_id, "processing", current_p, 1, "转录中", "正在把语音转为文字...", user_id=user['user_id'])
+            
+            progress_task = asyncio.create_task(smooth_progress())
+            try:
+                return await openai_service.transcribe_audio(
+                    audio_content,
+                    audio_filename,
+                    expected_duration=duration
+                )
+            finally:
+                progress_task.cancel()
+
         # 并行执行
         audio_url, transcription = await asyncio.gather(
             upload_to_s3_async(),
-            transcribe_async()
+            transcribe_with_progress()
         )
         
-        update_task_progress(task_id, "processing", 50, 1, "处理中", "语音识别完成")
+        update_task_progress(task_id, "processing", 50, 1, "处理中", "语音识别完成", user_id=user['user_id'])
         
         # 验证转录内容
         validate_transcription(transcription, duration)
@@ -420,29 +457,13 @@ async def process_pure_voice_diary_async(
         # ============================================
         # Step 2: AI 处理 - 润色 + 反馈 (50% → 85%)
         # ============================================
-        update_task_progress(task_id, "processing", 55, 2, "AI润色", "正在美化文字...")
+        update_task_progress(task_id, "processing", 55, 2, "AI润色", "正在美化文字...", user_id=user['user_id'])
         
         # 获取用户名字（优先使用 X-User-Name header）
-        import re
-        user_name = ""
-        # 1. 优先从请求头获取（前端传递的最新名字）
-        if request:
-            header_name = request.headers.get("X-User-Name", "").strip()
-            if header_name:
-                user_name = header_name
-                print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
-
-        # 2. 如果请求头没有，从 token 获取
-        if not user_name:
-            user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
-        
-        if not user_name:
-            user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-        
-        user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
+        user_display_name = get_display_name(user, request)
         
         # ✅ 细化进度更新：AI处理分为多个子步骤
-        update_task_progress(task_id, "processing", 60, 2, "AI润色", "正在优化文字表达...")
+        update_task_progress(task_id, "processing", 60, 2, "AI润色", "正在优化文字表达...", user_id=user['user_id'])
         
         # AI 润色和生成反馈（这个调用包含了润色、标题、情绪分析、反馈）
         ai_result = await openai_service.polish_content_multilingual(
@@ -451,21 +472,21 @@ async def process_pure_voice_diary_async(
         )
         
         # ✅ AI处理完成后的进度更新
-        update_task_progress(task_id, "processing", 70, 3, "生成标题", "正在提炼标题...")
-        await asyncio.sleep(0.2)  # 短暂延迟，让用户看到进度变化
+        update_task_progress(task_id, "processing", 70, 3, "生成标题", "正在提炼标题...", user_id=user['user_id'])
+        await asyncio.sleep(0.2)  # 短暂延迟，让前端看到进度变化
         
-        update_task_progress(task_id, "processing", 75, 3, "情绪分析", "正在读懂你的心情...")
+        update_task_progress(task_id, "processing", 75, 3, "情绪分析", "正在读懂你的心情...", user_id=user['user_id'])
         await asyncio.sleep(0.2)
         
-        update_task_progress(task_id, "processing", 80, 3, "生成反馈", "正在准备暖心回复...")
+        update_task_progress(task_id, "processing", 80, 3, "生成反馈", "正在准备暖心回复...", user_id=user['user_id'])
         await asyncio.sleep(0.2)
         
-        update_task_progress(task_id, "processing", 85, 3, "AI处理", "AI处理完成")
+        update_task_progress(task_id, "processing", 85, 3, "AI处理", "AI处理完成", user_id=user['user_id'])
         
         # ============================================
         # Step 3: 保存到数据库 (85% → 100%)
         # ============================================
-        update_task_progress(task_id, "processing", 90, 3, "保存", "正在保存日记...")
+        update_task_progress(task_id, "processing", 90, 3, "保存", "正在保存日记...", user_id=user['user_id'])
         
         # --------------------------------------------------------
         # 🔥 Step 2.5: 情绪分析结果 (Pure Text Analysis)
@@ -500,15 +521,15 @@ async def process_pure_voice_diary_async(
         # ============================================
         # Step 4: 完成 (100%)
         # ============================================
-        update_task_progress(task_id, "completed", 100, 4, "完成", "日记创建成功", diary=diary_obj)
+        update_task_progress(task_id, "completed", 100, 4, "完成", "日记创建成功", diary=diary_obj, user_id=user['user_id'])
         
     except HTTPException as e:
-        update_task_progress(task_id, "failed", 0, 0, "错误", str(e.detail), error=str(e.detail))
+        update_task_progress(task_id, "failed", 0, 0, "错误", str(e.detail), error=str(e.detail), user_id=user['user_id'])
     except Exception as e:
         print(f"❌ 纯语音日记处理失败: {str(e)}")
         import traceback
         traceback.print_exc()
-        update_task_progress(task_id, "failed", 0, 0, "错误", f"处理失败: {str(e)}", error=str(e))
+        update_task_progress(task_id, "failed", 0, 0, "错误", f"处理失败: {str(e)}", error=str(e), user_id=user['user_id'])
 
 
 async def process_voice_diary_async(
@@ -527,13 +548,14 @@ async def process_voice_diary_async(
         openai_service = get_openai_service()
         
         # ✅ 优化：任务已在创建时设置为5%，这里快速更新到8%
-        update_task_progress(task_id, "processing", 8, 0, "验证中", "正在验证音频...")
+        update_task_progress(task_id, "processing", 8, 0, "验证中", "正在验证音频...", user_id=user['user_id'])
         
         # 验证音频质量
-        validate_audio_quality(duration, len(audio_content))
+        user_lang = get_user_language(request)
+        validate_audio_quality(duration, len(audio_content), language=user_lang)
         
         # ✅ 验证完成，立即更新到10%
-        update_task_progress(task_id, "processing", 10, 0, "准备处理", "准备开始处理...")
+        update_task_progress(task_id, "processing", 10, 0, "准备处理", "准备开始处理...", user_id=user['user_id'])
         await asyncio.sleep(0.1)  # 短暂延迟，让前端看到进度变化
         
         # ============================================
@@ -565,7 +587,7 @@ async def process_voice_diary_async(
         # ============================================
         # Step 2 & 4: 并行处理 (25% → 70%)
         # ============================================
-        update_task_progress(task_id, "processing", 25, 2, "并行处理", "正在同时处理语音和图片...")
+        update_task_progress(task_id, "processing", 25, 2, "并行处理", "正在同时处理语音和图片...", user_id=user['user_id'])
         
         # 预先下载并编码图片（如果存在）
         # 🚀 优化：不再下载和分析图片，避免 AI 被图片内容误导（如生成日文标题）
@@ -578,69 +600,62 @@ async def process_voice_diary_async(
         #         if not isinstance(img_data, Exception):
         #             encoded_images.append(img_data)
         # 获取用户名字
-        import re
-        user_name = user.get('name', '').strip()
-        if not user_name:
-            user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-        if not user_name and request:
-            user_name = request.headers.get("X-User-Name", "").strip()
-        user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
+        user_display_name = get_display_name(user, request)
 
-        # 检测语言 (从 Header 获取，默认为 Chinese)
-        user_language = "Chinese"
-        if request:
-            accept_lang = request.headers.get("Accept-Language", "").lower()
-            if "en" in accept_lang and "zh" not in accept_lang:
-                user_language = "English"
-            # 也可以支持 X-User-Language 自定义 Header
-            custom_lang = request.headers.get("X-User-Language", "").strip().capitalize()
-            if custom_lang in ["Chinese", "English"]:
-                user_language = custom_lang
+        # 检测语言
+        user_language = get_user_language(request)
         
         print(f"🌐 检测到用户语言: {user_language}")
 
-        # 🚀 优化并行逻辑：将转录提取为独立任务，支持按需等待
+        # 🚀 优化并行逻辑：转录任务独占 25% -> 50% 进度
         async def do_transcription():
-            update_task_progress(task_id, "processing", 35, 2, "语音识别", "正在识别语音...")
-            result = await openai_service.transcribe_audio(
-                audio_content,
-                audio_filename,
-                expected_duration=duration
-            )
-            update_task_progress(task_id, "processing", 50, 2, "语音识别", "识别完成")
-            return result
+            update_task_progress(task_id, "processing", 25, 2, "语音识别", "正在倾听你的故事...", user_id=user['user_id'])
+            
+            # 内部虚拟进度，保持“呼吸感”，不轻易跳跃
+            async def smooth_progress():
+                current_p = 25
+                while current_p < 48:
+                    await asyncio.sleep(1.5)
+                    current_p += 5
+                    update_task_progress(task_id, "processing", min(current_p, 48), 2, "语音识别", "正在将语音转为文字...", user_id=user['user_id'])
+            
+            progress_task = asyncio.create_task(smooth_progress())
+            try:
+                result = await openai_service.transcribe_audio(
+                    audio_content,
+                    audio_filename,
+                    expected_duration=duration
+                )
+                return result
+            finally:
+                progress_task.cancel()
+                update_task_progress(task_id, "processing", 50, 2, "语音识别", "识别完成", user_id=user['user_id'])
         
         # 立即启动转录任务
         transcription_task = asyncio.create_task(do_transcription())
 
-        # 定义任务1：等待转录 -> AI 润色 & 标题
+        # 定义任务1：AI 润色 & 标题 (50% -> 70%)
         async def task_voice_and_polish():
-            # 等待转录完成
             transcription = await transcription_task
+            update_task_progress(task_id, "processing", 55, 3, "AI润色", "正在美化文字表达...", user_id=user['user_id'])
             
-            # 组合文字 - ✅ 优化：去除分割线，直接换行，更自然
             combined_text = transcription
             if content and content.strip():
                 combined_text = f"{content.strip()}\n{transcription}"
             
-            # AI 润色
-            update_task_progress(task_id, "processing", 55, 3, "AI润色", "正在美化文字...")
             polish_result = await openai_service._call_gpt4o_mini_for_polish_and_title(
                 combined_text, 
                 user_language, 
-                None # ✅ 不传图片，避免干扰
+                None 
             )
+            update_task_progress(task_id, "processing", 70, 3, "AI润色", "润色美化完成", user_id=user['user_id'])
             return transcription, polish_result
 
-        # 定义任务2：图片/文字分析 -> 暖心反馈
+        # 定义任务2：暖心反馈 (50% -> 80%)
         async def task_vision_and_feedback():
-            update_task_progress(task_id, "processing", 40, 3, "生成反馈", "正在感受你的心情...")
-            
-            # 💡 核心要求：始终等待语音转录完成，以确保获取完整上下文
-            print("⏳ 等待转录结果以获取完整上下文...")
             transcription = await transcription_task
+            update_task_progress(task_id, "processing", 60, 3, "生成反馈", "正在感受你的心情...", user_id=user['user_id'])
             
-            # 合并手动文字和语音转录
             full_context = content or ""
             if transcription and transcription.strip():
                 if full_context.strip():
@@ -652,9 +667,9 @@ async def process_voice_diary_async(
                 full_context, 
                 user_language,
                 user_display_name,
-                None # ✅ 不传图片，避免干扰
+                None 
             )
-            update_task_progress(task_id, "processing", 65, 3, "生成反馈", "反馈生成完成")
+            update_task_progress(task_id, "processing", 80, 3, "生成反馈", "反馈准备就绪", user_id=user['user_id'])
             return feedback
 
         # 并行执行
@@ -675,7 +690,7 @@ async def process_voice_diary_async(
         # --------------------------------------------------------
         # 🔥 Step C: 情绪分析 (Text Optimization)
         # --------------------------------------------------------
-        update_task_progress(task_id, "processing", 75, 3, "情绪分析", "正在读懂你的心...")
+        update_task_progress(task_id, "processing", 75, 3, "情绪分析", "正在读懂你的心...", user_id=user['user_id'])
         
         # 直接使用 GPT-4o-mini 的分析结果
         emotion_data = {
@@ -695,11 +710,11 @@ async def process_voice_diary_async(
             "emotion_data": emotion_data # ✅ 新增
         }
         
-        update_task_progress(task_id, "processing", 70, 3, "AI处理", "全部处理完成")
+        update_task_progress(task_id, "processing", 70, 3, "AI处理", "全部处理完成", user_id=user['user_id'])
         
-        update_task_progress(task_id, "processing", 85, 4, "整理内容", "正在为你整理日记...")
+        update_task_progress(task_id, "processing", 85, 4, "整理内容", "正在为你整理日记...", user_id=user['user_id'])
         await asyncio.sleep(0.2)
-        update_task_progress(task_id, "processing", 92, 5, "保存数据", "正在保存到数据库...")
+        update_task_progress(task_id, "processing", 92, 5, "保存数据", "正在保存到数据库...", user_id=user['user_id'])
         await asyncio.sleep(0.2)
         
         # ✅ 优化：如果图片URL还没准备好，等待图片上传完成
@@ -708,17 +723,16 @@ async def process_voice_diary_async(
         
         # ✅ 关键修复：无论是否有初始图片URL，都检查任务数据中是否有补充的图片URL
         # 因为图片可能在上传完成后才补充到任务中
-        if task_id in task_progress:
-            task_data = task_progress[task_id]
-            
+        task_data_from_db = db_service.get_task_progress(task_id, user_id=user['user_id'])
+        if task_data_from_db:
             # 如果任务数据中已经有图片URL，直接使用（图片已上传完成）
-            if task_data.get("image_urls"):
-                final_image_urls = task_data["image_urls"] or []
+            if task_data_from_db.get("image_urls"):
+                final_image_urls = task_data_from_db["image_urls"] or []
                 print(f"✅ 从任务数据中获取图片URL，共 {len(final_image_urls)} 张")
             # 如果还没有图片URL，但标记了等待图片上传，则等待
-            elif task_data.get("pending_image_upload"):
+            elif task_data_from_db.get("pending_image_upload"):
                 print("⏳ 等待图片上传完成...")
-                update_task_progress(task_id, "processing", 93, 5, "等待图片", "正在等待图片上传...")
+                update_task_progress(task_id, "processing", 93, 5, "等待图片", "正在等待图片上传...", user_id=user['user_id'])
                 # 等待最多30秒，让图片上传完成
                 max_wait_time = 30  # 30秒
                 wait_interval = 0.5  # 每0.5秒检查一次
@@ -727,12 +741,11 @@ async def process_voice_diary_async(
                 last_progress_update = 0
                 while waited_time < max_wait_time:
                     # 重新获取任务数据（可能被更新）
-                    if task_id in task_progress:
-                        task_data = task_progress[task_id]
-                        if task_data.get("image_urls"):
-                            final_image_urls = task_data["image_urls"] or []
-                            print(f"✅ 图片上传完成，共 {len(final_image_urls)} 张")
-                            break
+                    task_data_from_db = db_service.get_task_progress(task_id, user_id=user['user_id'])
+                    if task_data_from_db and task_data_from_db.get("image_urls"):
+                        final_image_urls = task_data_from_db["image_urls"] or []
+                        print(f"✅ 图片上传完成，共 {len(final_image_urls)} 张")
+                        break
                     
                     # ✅ 定期更新进度，避免用户感觉卡住（93% -> 94% -> 95%）
                     if waited_time - last_progress_update >= progress_update_interval:
@@ -743,7 +756,8 @@ async def process_voice_diary_async(
                             progress_value,
                             5,
                             "等待图片",
-                            f"正在等待图片上传... ({int(waited_time)}秒)"
+                            f"正在等待图片上传... ({int(waited_time)}秒)",
+                            user_id=user['user_id']
                         )
                         last_progress_update = waited_time
                     
@@ -774,19 +788,19 @@ async def process_voice_diary_async(
         )
         
         # 更新进度：完成（分两步，让进度更平滑）
-        update_task_progress(task_id, "processing", 96, 5, "保存数据", "数据保存中...")
+        update_task_progress(task_id, "processing", 96, 5, "保存数据", "数据保存中...", user_id=user['user_id'])
         await asyncio.sleep(0.2)
-        update_task_progress(task_id, "processing", 98, 5, "完成", "数据保存成功")
+        update_task_progress(task_id, "processing", 98, 5, "完成", "数据保存成功", user_id=user['user_id'])
         await asyncio.sleep(0.2)
-        update_task_progress(task_id, "completed", 100, 5, "完成", "处理完成", diary=diary_obj)
+        update_task_progress(task_id, "completed", 100, 5, "完成", "日记创建成功", diary=diary_obj, user_id=user['user_id'])
         
     except HTTPException as e:
-        update_task_progress(task_id, "failed", 0, 0, "错误", str(e.detail), error=str(e.detail))
+        update_task_progress(task_id, "failed", 0, 0, "错误", str(e.detail), error=str(e.detail), user_id=user['user_id'])
     except Exception as e:
         print(f"❌ 异步处理失败: {str(e)}")
         import traceback
         traceback.print_exc()
-        update_task_progress(task_id, "failed", 0, 0, "错误", f"处理失败: {str(e)}", error=str(e))
+        update_task_progress(task_id, "failed", 0, 0, "错误", f"处理失败: {str(e)}", error=str(e), user_id=user['user_id'])
 
 
 @router.post("/voice/stream", summary="创建语音日记（实时进度版）")
@@ -840,7 +854,8 @@ async def create_voice_diary_stream(
         audio_content_type = audio.content_type or "audio/m4a"
         
         # 验证音频质量
-        validate_audio_quality(duration, len(audio_content))
+        user_lang = get_user_language(request)
+        validate_audio_quality(duration, len(audio_content), language=user_lang)
         
     except HTTPException as e:
         # 验证失败，返回错误流
@@ -942,22 +957,7 @@ async def create_voice_diary_stream(
             })
             
             # 获取用户名字
-            import re
-            user_name = ""
-            # 1. 优先从请求头获取（前端传递的最新名字）
-            if request:
-                header_name = request.headers.get("X-User-Name", "").strip()
-                if header_name:
-                    user_name = header_name
-                    print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
-
-            # 2. 如果请求头没有，从 token 获取
-            if not user_name:
-                user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
-            
-            if not user_name:
-                user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-            user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
+            user_display_name = get_display_name(user, request)
             
             ai_result = await openai_service.polish_content_multilingual(
                 transcription, 
@@ -1085,7 +1085,8 @@ async def create_voice_diary_async(
         audio_content_type = audio.content_type or "audio/m4a"
         
         # 验证音频质量
-        validate_audio_quality(duration, len(audio_content))
+        user_lang = get_user_language(request)
+        validate_audio_quality(duration, len(audio_content), language=user_lang)
         
         # ✅ 解析图片URL列表（如果有）
         parsed_image_urls = None
@@ -1105,21 +1106,29 @@ async def create_voice_diary_async(
         
         # ✅ 优化：初始化任务进度时立即设置为5%，避免前端长时间停留在0%
         pending_image_upload = bool(expect_images) and not parsed_image_urls
-        task_progress[task_id] = {
+        # 初始化进度
+        task_data = {
             "status": "processing",
-            "progress": 5,  # ✅ 立即设置为5%，让用户看到进度开始
+            "progress": 5,
             "step": 0,
-            "step_name": "准备中",
-            "message": "正在准备处理...",
-            "created_at": datetime.now(timezone.utc),
+            "step_name": "初始化",
+            "message": "任务已接收，开始处理...",
+            "user_id": user['user_id'],
             "image_urls": parsed_image_urls,
-            "pending_image_upload": pending_image_upload
+            "pending_image_upload": pending_image_upload,
+            "created_at": datetime.now(timezone.utc).isoformat(), # 存储为 ISO 格式
+            "updated_at": datetime.now(timezone.utc).isoformat(), # 存储为 ISO 格式
+            "start_time": time.time(),
+            "user_name": get_display_name(user, request) # 保存用户名到任务中
         }
+        db_service.save_task_progress(task_id, task_data, user_id=user['user_id'])
+        # 同时更新内存缓存
+        task_progress[task_id] = task_data
         
         # 启动后台异步任务（根据是否有图片选择处理函数）
         has_images = parsed_image_urls and len(parsed_image_urls) > 0
         has_text_content = content and content.strip()
-        pending_images = task_progress[task_id].get("pending_image_upload", False)  # ✅ 检查是否等待图片上传
+        pending_images = task_data.get("pending_image_upload", False)  # ✅ 检查是否等待图片上传
         
         # ✅ 关键修复：如果有图片、文字内容，或者正在等待图片上传，都使用完整处理流程
         if has_images or has_text_content or pending_images:
@@ -1195,16 +1204,20 @@ async def get_voice_diary_progress(
         "error": "..."  # 仅当status为failed时存在
     }
     """
-    # 清理过期任务
-    cleanup_old_tasks()
+    # 优先从 DynamoDB 获取任务状态
+    task_data = db_service.get_task_progress(task_id, user_id=user['user_id'])
     
-    if task_id not in task_progress:
+    # 如果 DynamoDB 中没有，再尝试从内存缓存中获取（可能任务刚创建，还未完全写入 DB）
+    if not task_data:
+        task_data = task_progress.get(task_id)
+    
+    if not task_data:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
-    
-    task_data = task_progress[task_id]
     
     # 检查任务是否属于当前用户（简单验证，生产环境需要更严格的验证）
     # 这里可以添加更严格的用户验证逻辑
+    if task_data.get("user_id") != user['user_id']:
+        raise HTTPException(status_code=403, detail="无权访问此任务")
     
     return {
         "task_id": task_id,
@@ -1237,14 +1250,29 @@ async def add_images_to_task(
         image_urls: 图片URL列表
         user: 当前用户
     """
-    if task_id not in task_progress:
+    # 1. 优先从 DynamoDB 获取
+    task_data = db_service.get_task_progress(task_id, user_id=user['user_id'])
+    
+    # 2. 如果不存在，检查内存缓存（考虑刚创建还未写入 DB 的极端情况）
+    if not task_data:
+        task_data = task_progress.get(task_id)
+        
+    if not task_data:
+        print(f"❌ 任务不存在: {task_id}")
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
     
-    task_data = task_progress[task_id]
+    # 检查任务是否属于当前用户
+    if task_data.get("user_id") != user['user_id']:
+        raise HTTPException(status_code=403, detail="无权修改此任务")
     
     # ✅ 更新任务进度，添加图片URL（确保是列表）
     task_data["image_urls"] = image_urls if image_urls else []
     task_data["pending_image_upload"] = False
+    
+    # 保存更新后的任务数据到 DynamoDB
+    db_service.save_task_progress(task_id, task_data, user_id=user['user_id'])
+    # 同时更新内存缓存
+    task_progress[task_id] = task_data
     
     print(f"✅ 任务 {task_id} 已补充图片URL，共 {len(image_urls)} 张")
     print(f"📸 图片URLs: {image_urls}")
@@ -1476,26 +1504,9 @@ async def create_image_only_diary(
         if content and content.strip():
             openai_service = get_openai_service()
             
-            # ✅ 使用统一的用户名字获取逻辑（与文字日记和语音日记保持一致）
-            import re
-            user_name = ""
-            # 1. 优先从请求头获取（前端传递的最新名字）
-            if request:
-                header_name = request.headers.get("X-User-Name", "").strip()
-                if header_name:
-                    user_name = header_name
-                    print(f"   ✅ 优先使用请求头中的用户名字: {user_name}")
-            
-            # 2. 如果请求头没有，从 token 获取
-            if not user_name:
-                user_name = user.get('name', '').strip() or user.get('preferred_username', '').strip()
-            
-            if not user_name:
-                user_name = user.get('given_name', '').strip() or user.get('nickname', '').strip()
-            
-            # 提取名字（取第一个词）
-            user_display_name = re.split(r'\s+', user_name)[0] if user_name else None
-            print(f"👤 用户信息: user_id={user.get('user_id')}, name={user.get('name')}, display_name={user_display_name}")
+            # ✅ 使用统一的用户名字获取逻辑
+            user_display_name = get_display_name(user, request)
+            print(f"👤 用户信息: user_id={user.get('user_id')}, display_name={user_display_name}")
             
             print(f"✨ Processing text content with AI...")
             # ✅ 暂时去掉 Vision 模型，下个版本再加入

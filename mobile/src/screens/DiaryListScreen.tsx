@@ -1514,7 +1514,7 @@ export default function DiaryListScreen() {
               {/* 图片缩略图 */}
               {item.image_urls && item.image_urls.length > 0 && (
                 <View
-                  style={[styles.imageGrid, { marginTop: 0, marginBottom: 0 }]}
+                  style={[styles.imageGrid, { marginTop: 0, marginBottom: 12 }]}
                 >
                   {renderImageGrid(item.image_urls)}
                 </View>

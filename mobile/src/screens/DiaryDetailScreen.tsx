@@ -567,9 +567,6 @@ const formatDateTime = (dateTimeString: string): string => {
 
       return (
         <View style={styles.imageOnlyContainer}>
-          {/* Header 在顶部（绝对定位） */}
-          {renderDetailHeader()}
-
           <FlatList
             data={imageUrls}
             horizontal
@@ -635,10 +632,12 @@ const formatDateTime = (dateTimeString: string): string => {
     }
 
     // 普通日记：显示文字内容
+    const isEditing = isEditingTitle || isEditingContent;
+
     return (
       <>
-        {/* ✅ 图片缩略图 - 采用 Photo Entry 风格 (4列, 8px gap) */}
-        {diary.image_urls && diary.image_urls.length > 0 && (
+        {/* ✅ 图片缩略图 - 编辑时隐藏以释放空间并保持稳定性 */}
+        {!isEditing && diary.image_urls && diary.image_urls.length > 0 && (
           <View style={styles.imageGridContainer}>
             <View style={styles.imageGrid}>
               {diary.image_urls.map((url, index) => {
@@ -687,8 +686,8 @@ const formatDateTime = (dateTimeString: string): string => {
           </View>
         )}
 
-        {/* 音频播放器 */}
-        {diary.audio_url && (
+        {/* 音频播放器 - 编辑时隐藏 */}
+        {!isEditing && diary.audio_url && (
           <AudioPlayer
             audioUrl={diary.audio_url}
             audioDuration={diary.audio_duration}
@@ -722,13 +721,16 @@ const formatDateTime = (dateTimeString: string): string => {
           style={styles.diaryCardOverride}
         />
 
-        {/* AI反馈 - 编辑时隐藏 */}
-        {!isEditingTitle && !isEditingContent && !!diary.ai_feedback && (
+        {/* AI反馈 - 编辑时彻底隐藏，腾出滚动空间 */}
+        {!isEditing && !!diary.ai_feedback && (
           <AIFeedbackCard
             aiFeedback={diary.ai_feedback}
             style={styles.feedbackCard}
           />
         )}
+
+        {/* 底部间距 - 极简稳健设计：编辑时 600px 避让键盘，预览时 60px 确保滑出底部遮挡 */}
+        <View style={{ height: (isEditingTitle || isEditingContent) ? 600 : 60 }} />
       </>
     );
   };
@@ -742,10 +744,13 @@ const formatDateTime = (dateTimeString: string): string => {
       <View style={styles.modal}>
         <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
           {renderDetailHeader()}
+          {/* 主体滚动区域 */}
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
+            bounces={true}
           >
             {loading ? renderLoading() : error ? renderError() : renderDiaryDetail()}
           </ScrollView>
@@ -799,9 +804,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    // ✅ 修复：使用 minHeight 和 maxHeight 实现自适应高度
-    minHeight: "40%", // 最小高度，确保即使内容少也有合适的显示
-    maxHeight: "90%", // 最大高度，留出顶部空间
+    // ✅ 极简稳健设计：详情页统一使用固定比例高度，确保滚动锚点不再失效
+    height: windowHeight * 0.9, 
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -815,17 +819,15 @@ const styles = StyleSheet.create({
 
   safeArea: {
     flex: 1,
-    maxHeight: "100%", // ✅ 确保不超过 modal 的高度
   },
 
   scrollView: {
-    // ✅ 修复：移除 flex: 1，让 ScrollView 自适应内容高度
-    flexShrink: 1, // 允许收缩以适应父容器
+    flex: 1, // ✅ 核心修复：锁定 flex: 1，强制 ScrollView 获取主轴高度
   },
 
   scrollContent: {
-    paddingTop: 16, // ✅ 统一规则：第一个组件距离分割线的间距为 16px
-    paddingBottom: 24, // ✅ 修复：减少底部留白（原来是 100，太大了）
+    paddingTop: 16,
+    paddingBottom: 40, 
   },
 
   // ===== 加载状态 =====
@@ -991,8 +993,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     backgroundColor: "#fff",
-    minHeight: 200,
-    maxHeight: 400,
+    minHeight: 250, 
+    maxHeight: 320, // ✅ 黄金比例：确保编辑框在键盘弹出时能完整显示在剩余视口中
     textAlignVertical: "top",
   },
 

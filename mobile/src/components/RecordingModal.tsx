@@ -486,6 +486,7 @@ export default function RecordingModal({
   // ✅ 手势拖动处理
   // ✅ 新的手势 API
   const panGesture = Gesture.Pan()
+    .enabled(!isEditingTitle && !isEditingContent) // ✅ 编辑时禁用拖动手势，避开键盘冲突
     .onUpdate((event) => {
       // 只允许向下拖动（结果页时也允许，但会触发确认）
       if (event.translationY > 0) {
@@ -649,6 +650,40 @@ export default function RecordingModal({
       }
     };
   }, []);
+  
+  /**
+   * ✅ 统一处理“重新录制”或“重试”逻辑
+   * 彻底清理之前的所有状态，防止锁死或时间残留
+   */
+  const handleRerecord = async () => {
+    console.log("🔄 开始重置录音状态并重新录制...");
+    try {
+      // 1. 彻底重置 UI 和处理状态
+      setIsProcessing(false);
+      setProcessingProgress(0);
+      setProcessingStep(0);
+      currentProgressRef.current = 0;
+      if (progressAnimValue) {
+        progressAnimValue.setValue(0);
+      }
+      
+      // 2. 清理临时结果数据
+      setPendingDiaryId(null);
+      setHasSavedPendingDiary(false);
+      
+      // 3. 这里的关键：给 React 一个喘息时间，确保状态已经完全更新
+      await new Promise(resolve => setTimeout(resolve, 150));
+      
+      // 4. 调用 Hook 的取消逻辑确保 Native 资源释放
+      await cancelRecording();
+      
+      // 5. 调用重新录制
+      await startRecording();
+      console.log("✅ 重新录制已启动");
+    } catch (error) {
+      console.error("❌ 重新录制失败:", error);
+    }
+  };
 
   // ========== 录音相关函数 ==========
   /**
@@ -656,25 +691,33 @@ export default function RecordingModal({
    */
   const handleFinishRecording = async () => {
     try {
+      // ✅ 1. 先暂停录音，用于检查时长
+      await pauseRecording();
       const recordedDuration = duration;
-      const uri = await stopRecording();
 
-      // ✅ 检查录音时长(最短3秒)
-      if (recordedDuration < 3) {
-        Alert.alert(t("confirm.hint"), t("diary.shortRecordingHint"), [
-          {
-            text: t("diary.resumeRecording"),
-            style: "default",
-            onPress: () => startRecording(),
-          },
-          {
-            text: t("common.cancel"),
-            style: "cancel",
-            onPress: () => onCancel(),
-          },
-        ]);
+      // ✅ 2. 统一逻辑：检查录音时长(最短5秒)
+      if (recordedDuration < 5) {
+        Alert.alert(
+          t("diary.shortRecordingTitle"), 
+          t("diary.shortRecordingMessage"), 
+          [
+            {
+              text: t("diary.resumeRecording"),
+              style: "default",
+              onPress: () => resumeRecording(), // ✅ 真正继续录音，不重置时长
+            },
+            {
+              text: t("common.cancel"),
+              style: "cancel",
+              onPress: () => handleCancelRecording(),
+            },
+          ]
+        );
         return;
       }
+
+      // ✅ 3. 符合时长要求，正式停止录音并获取 URI
+      const uri = await stopRecording();
 
       // 显示处理中
       setIsProcessing(true);
@@ -718,6 +761,8 @@ export default function RecordingModal({
 
         console.log("✅ 日记创建成功:", diary.diary_id);
       } catch (error: any) {
+        // ✅ 必须立即重置处理状态，确保不遮挡后续的 Alert
+        setIsProcessing(false);
         console.log("❌ 处理失败:", error);
         setPendingDiaryId(null);
         setHasSavedPendingDiary(false);
@@ -741,10 +786,7 @@ export default function RecordingModal({
             [
               {
                 text: t("common.rerecord"),
-                onPress: () => {
-                  setIsProcessing(false);
-                  startRecording();
-                },
+                onPress: () => handleRerecord(),
               },
             ]
           );
@@ -759,15 +801,12 @@ export default function RecordingModal({
         Alert.alert(t("error.genericError"), errorMessage, [
           {
             text: t("common.retry"),
-            onPress: () => {
-              setIsProcessing(false);
-              startRecording();
-            },
+            onPress: () => handleRerecord(),
           },
           {
             text: t("common.cancel"),
             style: "cancel",
-            onPress: () => onCancel(),
+            onPress: () => handleCancelRecording(), // ✅ 使用统一的取消处理
           },
         ]);
       }
@@ -1262,7 +1301,6 @@ export default function RecordingModal({
             accessibilityLabel={t("common.done")}
             accessibilityHint={t("accessibility.button.saveHint")}
             accessibilityRole="button"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Text
               style={[
@@ -1298,19 +1336,22 @@ export default function RecordingModal({
 
         {/* 可滚动内容 - 包裹键盘避让 */}
         <KeyboardAvoidingView
-          style={{ flexShrink: 1 }}
+          style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+          enabled={isEditingTitle || isEditingContent}
+          keyboardVerticalOffset={0}
         >
           <ScrollView
-            style={styles.resultScrollView}
+            style={{ flex: 1 }} // ✅ 明确占用所有剩余空间
             contentContainerStyle={styles.resultScrollContent}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true} // ✅ 显示进度条协助浏览
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
+            keyboardDismissMode="on-drag" // ✅ 更好的移动端滚动体验
+            bounces={false} // ✅ 彻底禁用弹性回弹，解决“滑不动”和“跳动”问题
           >
             {/* 音频播放器 */}
-            {resultDiary.audio_url && (
+            {/* 编辑时隐藏播放器，聚焦编辑体验，防止布局跳动 */}
+            {!isEditingTitle && !isEditingContent && resultDiary.audio_url && (
               <AudioPlayer
                 audioUrl={resultDiary.audio_url}
                 audioDuration={resultDiary.audio_duration}
@@ -1352,8 +1393,8 @@ export default function RecordingModal({
               }}
             />
 
-            {/* 底部间距 */}
-            <View style={{ height: 100 }} />
+            {/* 底部间距 - 编辑时增加 600px 间距，预览时仅留 20px */}
+            <View style={{ height: (isEditingTitle || isEditingContent) ? 600 : 20 }} />
           </ScrollView>
         </KeyboardAvoidingView>
 
@@ -1473,10 +1514,13 @@ const styles = StyleSheet.create({
   modalRecording: {
     minHeight: 640,
   },
-  // ✅ 结果预览界面：折中方案 - 75% 默认高度，90% 最大高度
+  // ✅ 结果预览界面：自适应高度但带有最小高度保障（锁定范围以防止键盘弹出时剧烈抖动）
   modalResult: {
-    minHeight: "75%", // 默认 75%，确保内容有足够显示空间
-    maxHeight: "90%", // 内容超长时最大 90%
+    minHeight: "75%", 
+    maxHeight: "95%",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#fff',
   },
   header: {
     flexDirection: "row",
@@ -1686,8 +1730,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     backgroundColor: "#fff",
-    minHeight: 200, // ✅ 增加最小高度
-    maxHeight: 400, // ✅ 限制最大高度
+    minHeight: 350, // ✅ 顶级优化：增加初始高度，让编辑框在 Modal 中顶天立地
     textAlignVertical: "top",
   },
   // ===== 结果页Header =====

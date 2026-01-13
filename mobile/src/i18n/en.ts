@@ -174,7 +174,7 @@ export default {
     needMicPermission: "Microphone permission required",
     micPermissionMessage: "Please allow microphone access in Settings",
     recordingTooShort: "Recording too short",
-    recordingTooShortMessage: "Please record at least 2 seconds",
+    recordingTooShortMessage: "Please record at least 5 seconds",
     recordingTooLong: "Recording too long",
     recordingTooLongMessage: "Please keep recording under 10 minutes",
     emptyVoiceTitle: "Empty content, please record valid information",
@@ -223,8 +223,8 @@ export default {
     pauseRecording: "Paused",
     resumeRecording: "Resume Recording",
     startRecording: "Record Again",
-    shortRecordingHint:
-      "Please share a complete thought and record at least 3 seconds.",
+    shortRecordingTitle: "Entry too short",
+    shortRecordingMessage: "Please record at least 5 seconds to capture your full thought.",
     noVoiceDetected:
       "We couldn't hear anything.\n\nPlease make sure you speak clearly, stay close to the microphone, and share a full sentence.",
     placeholderTitle: "Add a title...",

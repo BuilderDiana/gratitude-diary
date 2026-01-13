@@ -462,3 +462,53 @@ class DynamoDBService:
             raise
 
         return audio_urls
+
+    def save_task_progress(self, task_id: str, task_data: dict, user_id: str = "TASK_SYSTEM") -> None:
+        """
+        保存异步任务进度到 DynamoDB
+        """
+        try:
+            item = self._convert_to_decimal(task_data)
+            
+            # 使用用户 ID 作为 Partition Key
+            item['userId'] = user_id
+            item['createdAt'] = f"TASK#{task_id}"
+            item['taskId'] = task_id
+            item['itemType'] = 'task'
+            
+            import time
+            item['ttl'] = int(time.time()) + 7200  # 2小时后过期
+            
+            self.table.put_item(Item=item)
+        except Exception as e:
+            print(f"❌ 保存任务进度失败: {str(e)}")
+
+    def get_task_progress(self, task_id: str, user_id: str = "TASK_SYSTEM") -> Optional[dict]:
+        """
+        从 DynamoDB 获取任务进度
+        """
+        try:
+            response = self.table.get_item(
+                Key={
+                    'userId': user_id,
+                    'createdAt': f"TASK#{task_id}"
+                }
+            )
+            return response.get('Item')
+        except Exception as e:
+            print(f"❌ 获取任务进度失败: {str(e)}")
+            return None
+
+    def delete_task_progress(self, task_id: str, user_id: str = "TASK_SYSTEM") -> None:
+        """
+        删除任务进度
+        """
+        try:
+            self.table.delete_item(
+                Key={
+                    'userId': user_id,
+                    'createdAt': f"TASK#{task_id}"
+                }
+            )
+        except Exception as e:
+            print(f"❌ 删除任务进度失败: {str(e)}")

@@ -36,6 +36,7 @@ import {
   pollTaskProgress,
   deleteDiary,
   updateDiary,
+  getDiaries,
   ProgressCallback,
   Diary,
 } from "../services/diaryService";
@@ -97,6 +98,16 @@ export default function ImageDiaryModal({
   const [showPicker, setShowPicker] = useState(false); // 显示底部选择器
   const [showConfirmModal, setShowConfirmModal] = useState(false); // 显示确认弹窗
   const [textContent, setTextContent] = useState(""); // 文字内容
+  const [isPureImageSaving, setIsPureImageSaving] = useState(false); // ✅ 记录是否是纯图片保存模式
+  
+  // ✅ 新增：组件挂载监听
+  const isMounted = useRef(true);
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
   // ✅ 文字输入框默认显示（用户选择图片后自动显示）
 
   const [isSaving, setIsSaving] = useState(false); // ✅ 普通保存状态（无AI）
@@ -227,10 +238,18 @@ export default function ImageDiaryModal({
     },
   ];
 
+  // ✅ 纯图片场景专用步骤
+  const pureImageProcessingSteps = [
+    { icon: "📤", text: t("diary.processingSteps.uploadImages"), progress: 80 },
+    { icon: "💾", text: t("common.saving"), progress: 100 },
+  ];
+
   // ✅ 根据场景选择对应的处理步骤
   // 如果正在录音模式，使用语音步骤；否则使用图片+文字步骤
   const processingSteps = isRecordingMode
     ? voiceProcessingSteps
+    : isPureImageSaving
+    ? pureImageProcessingSteps
     : imageTextProcessingSteps;
 
   // ✅ 使用 useRef 存储 cancelRecording，避免依赖项变化导致无限循环
@@ -451,27 +470,68 @@ export default function ImageDiaryModal({
 
   // ✅ 纯图片保存（无AI，直接保存）
   const doSaveImageOnly = async () => {
-    setIsSaving(true);
+    // 统一使用展示进度流程
+    setIsPureImageSaving(true);
+    setIsProcessing(true);
+    setProcessingStep(0);
+    setProcessingProgress(0);
+    currentProgressRef.current = 0;
+    progressAnimValue.setValue(0);
+
     try {
+      console.log("📤 开始上传图片 (纯图片模式)...");
+      
+      // ✅ 1. 执行真实上传，获得 0-80% 的进度反馈
+      const imageUrls = await uploadDiaryImages(images, (uploadProgress) => {
+        if (!isMounted.current) return;
+        // 在纯图片模式下，上传占 80%
+        const mappedProgress = Math.round(uploadProgress * 0.8);
+        smoothUpdateProgress(mappedProgress);
+      });
+
+      if (!isMounted.current) return;
+
+      // ✅ 2. 切换到保存步骤 (80-100%)
+      setProcessingStep(1); 
+      smoothUpdateProgress(90);
+
       // 直接调用创建图片日记接口
-      await createImageOnlyDiary(images);
+      const diary = await createImageOnlyDiary(imageUrls);
+      console.log("✅ 纯图片日记创建成功:", diary.diary_id);
 
-      // ✅ 统一使用toast反馈
-      showToast(t("success.diaryCreated"));
+      smoothUpdateProgress(100);
+      
+      // 短暂延迟展示 100%
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // ✅ 短暂延迟让用户看到toast，然后统一跳转
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (!isMounted.current) return;
 
-      setIsSaving(false);
+      setIsProcessing(false);
+      setIsPureImageSaving(false);
       setImages([]);
       setTextContent("");
       setShowPicker(false);
-      // ✅ 统一通过onSuccess回调跳转
-      onSuccess();
+      
+      // ✅ 统一使用toast反馈
+      showToast(t("success.diaryCreated"));
+      
+      // 这里的延时是为了让 Toast 消失后再跳转
+      setTimeout(() => {
+        if (isMounted.current) {
+          onSuccess();
+        }
+      }, 300);
+
     } catch (error: any) {
       console.error("保存失败:", error);
-      Alert.alert("保存失败", error.message || "请重试");
-      setIsSaving(false);
+      if (isMounted.current) {
+        Alert.alert("保存失败", error.message || "请重试");
+      }
+    } finally {
+      if (isMounted.current) {
+        setIsProcessing(false);
+        setIsPureImageSaving(false);
+      }
     }
   };
 
@@ -488,12 +548,14 @@ export default function ImageDiaryModal({
       // ✅ 使用真实的上传进度回调：0-70%
       setProcessingStep(0); // 上传图片步骤
       const imageUrls = await uploadDiaryImages(images, (uploadProgress) => {
+        if (!isMounted.current) return;
         // 将上传进度映射到0-70%
         const mappedProgress = Math.round(uploadProgress * 0.7);
-        console.log(`📊 真实上传进度: ${uploadProgress}% → 显示进度: ${mappedProgress}%`);
         smoothUpdateProgress(mappedProgress);
       });
       
+      if (!isMounted.current) return;
+
       // 上传完成，立即更新到70%
       console.log("✅ 图片上传完成，URLs:", imageUrls);
       setProcessingStep(1); // 切换到AI处理步骤
@@ -506,14 +568,18 @@ export default function ImageDiaryModal({
         textContent.trim() || undefined
       );
 
+      if (!isMounted.current) return;
+
       console.log("✅ 图片+文字日记创建成功:", diary);
 
       // ✅ AI处理完成，平滑过渡到100%
       setProcessingStep(imageTextProcessingSteps.length - 1);
       smoothUpdateProgress(100);
       
-      // ✅ 等待进度动画完成后再显示结果 (smoothUpdateProgress(100) 的 duration 是 1000ms)
+      // ✅ 等待进度动画完成后再显示结果
       await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      if (!isMounted.current) return;
 
       // ✅ 显示结果
       setIsProcessing(false);
@@ -524,11 +590,15 @@ export default function ImageDiaryModal({
       setEditedTitle(diary.title);
       setEditedContent(diary.polished_content);
 
-      // ✅ 移除toast - 结果页已经足够明确，不需要额外提示
     } catch (error: any) {
       console.error("❌ 保存失败:", error);
-      Alert.alert("保存失败", error.message || "请重试");
-      setIsProcessing(false);
+      if (isMounted.current) {
+        Alert.alert("保存失败", error.message || "请重试");
+      }
+    } finally {
+      if (isMounted.current) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -681,8 +751,8 @@ export default function ImageDiaryModal({
    * 完成录音并处理
    */
   const finishRecording = async () => {
-    // ✅ 添加组件卸载检测
-    let isMounted = true;
+    // ✅ 使用组件级的 isMounted.current
+    let failedToAttachImages: string[] | null = null;
 
     try {
       console.log("✅ 完成录音");
@@ -733,7 +803,7 @@ export default function ImageDiaryModal({
 
       // ✅ 进度回调 - 添加组件卸载检测
       const progressCallback: ProgressCallback = (progressData) => {
-        if (!isMounted) {
+        if (!isMounted.current) {
           console.log("⚠️ 组件已卸载,跳过进度更新");
           return;
         }
@@ -757,73 +827,99 @@ export default function ImageDiaryModal({
         smoothUpdateProgress(progress);
       };
 
-      // ✅ 立即启动AI处理（不等待图片上传）
-      // 使用新的 createVoiceDiaryTask 函数，只创建任务并返回 task_id
-      console.log("🎤 启动AI处理（与图片上传并行）...");
+      // ✅ 进入上传阶段：启动“伪进度”以消除 0% 的僵持感
+      setProcessingStep(0);
+      setProcessingProgress(5);
+      const uploadInterval = setInterval(() => {
+        setProcessingProgress(prev => (prev < 15 ? prev + 3 : prev)); 
+      }, 700);
 
-      // 创建任务（不传图片URL）
-      const { taskId, headers } = await createVoiceDiaryTask(
-        uri,
-        recordedDuration,
-        textContent.trim() || undefined,
-        images.length > 0
-      );
-
-      // ✅ 检查组件是否已卸载
-      if (!isMounted) {
-        console.log("⚠️ 组件已卸载,取消AI处理");
-        return;
+      let taskId: string;
+      let headers: Record<string, string>;
+      
+      try {
+        // 1. 发起任务创建（包含大规模语音文件上传）
+        // 这里是逻辑起点：上传语音 -> 后端 Whisper 转录 -> (润色/标题 并行 情绪/反馈)
+        console.log("🎤 正在上传语音并创建任务...");
+        const createResult = await createVoiceDiaryTask(
+          uri,
+          recordedDuration,
+          textContent.trim() || undefined,
+          images.length > 0
+        );
+        taskId = createResult.taskId;
+        headers = createResult.headers;
+      } finally {
+        clearInterval(uploadInterval);
       }
 
-      // ✅ 启动轮询（后台执行）
-      const aiProcessPromise = pollTaskProgress(
-        taskId,
-        headers,
-        progressCallback
-      );
+      if (!isMounted.current) return;
 
-      // ✅ 等待图片上传完成，然后补充到任务中
-      let imageUrls: string[] = [];
+      // 2. 启动两个并行任务
+      const aiProcessPromise = pollTaskProgress(taskId, headers, progressCallback);
+      
+      let attachImagesPromise = Promise.resolve();
       if (imageUploadPromise) {
-        try {
-          imageUrls = await imageUploadPromise;
-
-          // ✅ 检查组件是否已卸载
-          if (!isMounted) {
-            console.log("⚠️ 组件已卸载,取消补充图片");
-            return;
-          }
-
-          console.log("✅ 图片上传完成，补充图片URL到任务...");
-
-          // ✅ 补充图片URL到任务（AI处理还在进行中）
-          await addImagesToTask(taskId, imageUrls);
-          console.log("✅ 图片URL已补充到任务");
-        } catch (error: any) {
-          console.error("❌ 图片上传失败:", error);
-          const errorMessage = error.message || "上传图片失败，请重试";
-
-          // ✅ 关键修复：图片上传失败时,正确清理状态
-          if (isMounted) {
-            setIsProcessing(false);
-            setIsRecordingMode(false);
-            Alert.alert("错误", errorMessage);
-          }
-
-          // ✅ 清理 Keep Awake
+        attachImagesPromise = (async () => {
+          const imageUrls = await imageUploadPromise;
+          if (!isMounted.current) return;
+          
           try {
-            deactivateKeepAwake();
-          } catch (_) {}
+            await addImagesToTask(taskId, imageUrls);
+            console.log("✅ 图片已成功关联到任务");
+            failedToAttachImages = null; // 清除补救标志
+          } catch (error) {
+            console.warn("⚠️ 关联图片失败，准备执行完成后补救:", error);
+            failedToAttachImages = imageUrls;
+          }
+        })();
+      }
 
-          return;
+      // 3. ⚖️ 关键点：等待两者全部完成（或者在 AI 的 93% 等待点汇合）
+      let diary: Diary;
+      try {
+        await Promise.all([aiProcessPromise, attachImagesPromise]);
+        diary = await aiProcessPromise;
+      } catch (err: any) {
+        // ✅ 即使 AI 轮询失败（如极速完成导致 ID 注销），也要确保等待图片关联逻辑运行完
+        // 这样我们才知道是否需要执行后续的 updateDiary 补救
+        if (imageUploadPromise) {
+          try {
+            await attachImagesPromise;
+          } catch (_) {
+            // 内部错误已在 attachImagesPromise 中处理并记录到 failedToAttachImages
+          }
+        }
+
+        if (err.message === "TASK_COMPLETED_OR_EXPIRED") {
+          console.log("🩹 触发结项补救：任务可能已极速完成，尝试找回日记...");
+          // 增加一点容错等待，确保后端写入完成
+          await new Promise(r => setTimeout(r, 1000));
+          const diaries = await getDiaries();
+          if (diaries && diaries.length > 0) {
+            diary = diaries[0]; // 拿最新一条
+            console.log("✅ 成功找回极速处理的日记:", diary.diary_id);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
         }
       }
 
-      // ✅ 等待AI处理完成（后端会在保存时等待图片URL）
-      const diary = await aiProcessPromise;
+      // 4. 残余补救 (仅当 addImagesToTask 彻底失败时)
+      if (failedToAttachImages && (failedToAttachImages as string[]).length > 0) {
+        try {
+          console.log("🩹 正在执行应急关联...", diary.diary_id);
+          const updatedDiary = await updateDiary(diary.diary_id, undefined, undefined, failedToAttachImages);
+          diary = updatedDiary;
+        } catch (e) {
+          console.error("❌ 应急关联也失败了:", e);
+        }
+      }
 
       // ✅ 检查组件是否已卸载
-      if (!isMounted) {
+      if (!isMounted.current) {
         console.log("⚠️ 组件已卸载,跳过结果显示");
         return;
       }
@@ -847,7 +943,7 @@ export default function ImageDiaryModal({
       console.error("❌ 处理失败:", error);
 
       // ✅ 关键修复：所有错误都要正确清理状态
-      if (isMounted) {
+      if (isMounted.current) {
         setIsProcessing(false);
         setIsRecordingMode(false);
 
@@ -873,8 +969,7 @@ export default function ImageDiaryModal({
         deactivateKeepAwake();
       } catch (_) {}
     } finally {
-      // ✅ 标记组件已卸载
-      isMounted = false;
+      // 权限清理或资源回收
     }
   };
 

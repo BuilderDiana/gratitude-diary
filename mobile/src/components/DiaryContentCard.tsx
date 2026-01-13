@@ -150,7 +150,7 @@ export const DiaryContentCard: React.FC<DiaryContentCardProps> = ({
             autoFocus
             multiline
             placeholder={t("diary.placeholderContent")}
-            scrollEnabled={true}
+            scrollEnabled={true} // ✅ 允许内部滚动，配合 maxHeight 实现框内滑动
             textAlignVertical="top"
             accessibilityLabel={t("diary.placeholderContent")}
           />
@@ -232,7 +232,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     backgroundColor: "#fff",
-    minHeight: 150,
+    minHeight: 250, 
+    maxHeight: 400, // ✅ 核心修复：限制编辑框最大高度，当内容超长时在框内滑动
     textAlignVertical: "top",
   },
 });

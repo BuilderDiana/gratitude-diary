@@ -5,23 +5,38 @@ from typing import Optional
 from fastapi import HTTPException
 
 
-def validate_audio_quality(duration: int, audio_size: int) -> None:
+def validate_audio_quality(duration: int, audio_size: int, language: str = "Chinese") -> None:
     """
     Validate audio length and size for basic quality.
     """
-    print(f"🔍 开始音频质量验证 - 时长: {duration}秒, 大小: {audio_size} bytes")
+    print(f"🔍 开始音频质量验证 - 时长: {duration}秒, 大小: {audio_size} bytes, 语言: {language}")
 
     if duration < 5:
+        if language == "English":
+            message = "Recording too short. Please record at least 5 seconds of content. Try saying a complete sentence."
+        else:
+            message = "录音时间太短，请至少录制5秒以上的内容。建议说一个完整的句子。"
+            
         raise HTTPException(
             status_code=400,
-            detail="录音时间太短，请至少录制5秒以上的内容。建议说一个完整的句子。",
+            detail=message,
         )
 
     if duration > 600:
-        raise HTTPException(status_code=400, detail="录音时间过长，请控制在10分钟以内")
+        if language == "English":
+            message = "Recording too long. Please keep it under 10 minutes."
+        else:
+            message = "录音时间过长，请控制在10分钟以内"
+            
+        raise HTTPException(status_code=400, detail=message)
 
     if audio_size < 1000:
-        raise HTTPException(status_code=400, detail="音频文件太小，可能没有录制到有效内容")
+        if language == "English":
+            message = "Audio file too small. It might not contain valid audio."
+        else:
+            message = "音频文件太小，可能没有录制到有效内容"
+            
+        raise HTTPException(status_code=400, detail=message)
 
     print("✅ 音频质量验证通过")
 

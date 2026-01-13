@@ -1,8 +1,19 @@
 {
   "expo": {
-    "name": "thankly",
+    "name": "Thankly",
     "slug": "gratitude-diary",
-    "version": "1.0.0",
+    "version": "1.1.0",
+    "description": "Your personal gratitude journal with AI",
+    "locales": {
+      "zh": {
+        "displayName": "感记",
+        "description": "用心记录,感恩生活"
+      },
+      "en": {
+        "displayName": "Thankly",
+        "description": "Gratitude journaling made simple"
+      }
+    },
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
@@ -10,6 +21,9 @@
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/2b3c207c-899e-45be-8e1f-ee728ea89faa"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     },
     "splash": {
       "image": "./assets/splash-logo.png",
@@ -33,14 +47,10 @@
       }
     },
     "android": {
-      "versionCode": 1,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#FAF6ED"
-      },
-      "notification": {
-        "icon": "./assets/notification-icon.png",
-        "color": "#E56C45"
       },
       "package": "com.stillkindailab.gratitudediary",
       "permissions": [
@@ -78,11 +88,15 @@
         }
       ],
       [
-        "@sentry/react-native/expo",
+        "expo-build-properties",
         {
-          "url": "https://sentry.io/",
-          "project": "thankly-mobile",
-          "organization": "diana-deng"
+          "android": {
+            "lintOptions": {
+              "checkReleaseBuilds": false,
+              "abortOnError": false,
+              "disable": ["ExtraTranslation"]
+            }
+          }
         }
       ]
     ],

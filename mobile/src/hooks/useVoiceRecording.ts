@@ -23,22 +23,34 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 
 let globalRecordingInstance: Audio.Recording | null = null;
 let globalIsPreparingRecording = false;
+let globalActiveInstanceId: string | null = null;
+let instanceCounter = 0;
 
 /**
  * Safely cleanup a recording instance
  * This is the ONLY way to properly release native audio resources
  */
-async function safeCleanupRecording(recording: Audio.Recording | null): Promise<void> {
+async function safeCleanupRecording(
+  recording: Audio.Recording | null,
+  reason: string = "unspecified"
+): Promise<void> {
   if (!recording) return;
   
   try {
-    // stopAndUnloadAsync is the ONLY correct method for Recording objects
-    // It stops recording (if active) AND releases native resources
-    await recording.stopAndUnloadAsync();
-    console.log("✅ Recording instance cleaned up successfully");
-  } catch (error) {
-    // This is expected if recording was never started or already cleaned up
-    console.log("💡 Recording cleanup completed (was already stopped)");
+    const status = await recording.getStatusAsync();
+    if (status.canRecord || status.isRecording) {
+      console.log(`🧹 safeCleanupRecording [${reason}]: stopping and unloading...`);
+      await recording.stopAndUnloadAsync();
+      console.log(`✅ safeCleanupRecording [${reason}]: instance cleaned up successfully`);
+    } else {
+      console.log(`💡 safeCleanupRecording [${reason}]: already stopped/unloaded`);
+    }
+  } catch (error: any) {
+    if (error.message?.includes("already been unloaded")) {
+      console.log(`💡 safeCleanupRecording [${reason}]: was already unloaded`);
+    } else {
+      console.warn(`⚠️ safeCleanupRecording [${reason}] error:`, error.message);
+    }
   }
 }
 
@@ -105,10 +117,12 @@ export function useVoiceRecording(
   // Refs (for values that shouldn't trigger re-renders)
   // ============================================================================
   
+  const [instanceId] = useState(() => `rec-inst-${++instanceCounter}`);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasShownWarningRef = useRef(false);
   const isCleaningUpRef = useRef(false); // Prevent concurrent cleanup
+  const stopPromiseRef = useRef<Promise<string | null> | null>(null); // Concurrency guard for stopping
 
   // ============================================================================
   // Duration Timer
@@ -155,21 +169,30 @@ export function useVoiceRecording(
   // ============================================================================
 
   useEffect(() => {
+    console.log(`🏗️ [${instanceId}] useVoiceRecording initialized`);
     return () => {
       // Component unmounting - clean up everything
       (async () => {
+        console.log(`🗑️ [${instanceId}] useVoiceRecording unmounting...`);
+        
+        // If this instance owns the global recording, release it
+        if (globalActiveInstanceId === instanceId) {
+          console.log(`👋 [${instanceId}] Releasing global ownership on unmount`);
+          globalActiveInstanceId = null;
+        }
+
         if (recordingRef.current) {
-          await safeCleanupRecording(recordingRef.current);
+          await safeCleanupRecording(recordingRef.current, `unmount-${instanceId}`);
           if (globalRecordingInstance === recordingRef.current) {
             globalRecordingInstance = null;
           }
+          recordingRef.current = null;
         }
+        
         stopDurationTimer();
         try {
           await deactivateKeepAwake(KEEP_AWAKE_TAG);
-        } catch (e) {
-          // Ignore
-        }
+        } catch (e) {}
       })();
     };
   }, []);
@@ -256,18 +279,19 @@ export function useVoiceRecording(
   const startRecording = async (): Promise<void> => {
     // Guard: Prevent concurrent start attempts
     if (isStarting) {
-      console.log("⚠️ Recording start already in progress, ignoring");
-      return;
-    }
-
-    // Guard: Check if already recording
-    if (isRecording) {
-      console.log("⚠️ Already recording, ignoring start request");
+      console.log(`⚠️ [${instanceId}] Recording start already in progress, ignoring`);
       return;
     }
 
     setIsStarting(true);
-    console.log("🎤 Starting recording flow...");
+    console.log(`🎤 [${instanceId}] Starting recording flow...`);
+    
+    // Take ownership immediately
+    const previousOwner = globalActiveInstanceId;
+    globalActiveInstanceId = instanceId;
+    if (previousOwner && previousOwner !== instanceId) {
+      console.log(`🔄 [${instanceId}] Taking ownership from ${previousOwner}`);
+    }
 
     try {
       // Step 1: Check permissions
@@ -276,19 +300,23 @@ export function useVoiceRecording(
         throw new Error("Microphone permission denied");
       }
 
-      // Step 2: Clean up any existing recording
-      console.log("🧹 Cleaning up previous recording instances...");
-      
-      // Clean local ref
-      if (recordingRef.current) {
-        await safeCleanupRecording(recordingRef.current);
-        recordingRef.current = null;
-      }
-
-      // Clean global ref
-      if (globalRecordingInstance) {
-        await safeCleanupRecording(globalRecordingInstance);
-        globalRecordingInstance = null;
+      // Step 2: Force cleanup any existing recording state before starting
+      // This ensures we can recover from any "Already recording" deadlock
+      if (isRecording || recordingRef.current || globalRecordingInstance) {
+        console.log(`🧹 [${instanceId}] Forcing cleanup of existing recording state before start...`);
+        stopDurationTimer();
+        
+        if (recordingRef.current) {
+          await safeCleanupRecording(recordingRef.current, `start-local-${instanceId}`);
+          recordingRef.current = null;
+        }
+        
+        if (globalRecordingInstance) {
+          await safeCleanupRecording(globalRecordingInstance, `start-global-${instanceId}`);
+          globalRecordingInstance = null;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
 
       // Wait for native cleanup
@@ -411,12 +439,14 @@ export function useVoiceRecording(
 
       console.log("✅ Recording flow completed successfully");
     } catch (error: any) {
-      console.error("❌ Recording start failed:", error);
+      console.error(`❌ [${instanceId}] Recording start failed:`, error);
 
       // Clean up on error
       if (globalRecordingInstance) {
-        await safeCleanupRecording(globalRecordingInstance);
-        globalRecordingInstance = null;
+        await safeCleanupRecording(globalRecordingInstance, `error-${instanceId}`);
+        if (globalActiveInstanceId === instanceId) {
+          globalRecordingInstance = null;
+        }
       }
 
       setIsRecording(false);
@@ -440,6 +470,7 @@ export function useVoiceRecording(
       setIsStarting(false);
     }
   };
+
 
   // ============================================================================
   // PAUSE RECORDING
@@ -488,43 +519,73 @@ export function useVoiceRecording(
 
   const stopRecording = async (): Promise<string | null> => {
     if (!recordingRef.current) {
-      console.log("⚠️ No recording to stop");
+      console.log(`⚠️ [${instanceId}] No recording to stop`);
       return null;
     }
 
-    try {
-      console.log("⏹️ Stopping recording...");
-      
-      const uri = recordingRef.current.getURI();
-      await recordingRef.current.stopAndUnloadAsync();
-      
-      // Clean up references
-      if (globalRecordingInstance === recordingRef.current) {
-        globalRecordingInstance = null;
-      }
-      recordingRef.current = null;
+    // Guard: Prevent concurrent stop calls for the same instance
+    if (stopPromiseRef.current) {
+      console.log(`⏳ [${instanceId}] Stop already in progress, returning existing promise`);
+      return stopPromiseRef.current;
+    }
 
-      // Stop timer
-      stopDurationTimer();
-
-      // Update state
-      setIsRecording(false);
-      setIsPaused(false);
-
-      // Deactivate keep awake
+    const localStopAction = async (): Promise<string | null> => {
       try {
-        await deactivateKeepAwake(KEEP_AWAKE_TAG);
-      } catch (e) {
-        // Ignore
-      }
+        console.log(`⏹️ [${instanceId}] Stopping recording...`);
+        
+        // 1. Capture URI BEFORE stopAndUnload
+        const uri = recordingRef.current?.getURI() || null;
+        
+        try {
+          // 2. Try to stop and unload
+          await recordingRef.current?.stopAndUnloadAsync();
+          console.log(`✅ [${instanceId}] Recording stopped successfully`);
+        } catch (unloadError: any) {
+          // If it fails because it's already unloaded, that's actually fine - we want the URI!
+          if (unloadError.message?.includes("already been unloaded")) {
+            console.log(`💡 [${instanceId}] Recording was already unloaded, proceeding with URI`);
+          } else {
+            throw unloadError;
+          }
+        }
+        
+        // Clean up references
+        if (globalRecordingInstance === recordingRef.current) {
+          globalRecordingInstance = null;
+          globalActiveInstanceId = null;
+        }
+        recordingRef.current = null;
 
-      console.log("✅ Recording stopped successfully");
-      return uri;
-    } catch (error) {
-      console.error("Failed to stop recording:", error);
-      return null;
-    }
+        // Stop timer
+        stopDurationTimer();
+
+        // Update state
+        setIsRecording(false);
+        setIsPaused(false);
+
+        // Deactivate keep awake
+        try {
+          await deactivateKeepAwake(KEEP_AWAKE_TAG);
+        } catch (e) {}
+
+        return uri;
+      } catch (error) {
+        console.error(`❌ [${instanceId}] Failed to stop recording:`, error);
+        // Reset state even on failure
+        setIsRecording(false);
+        setIsPaused(false);
+        stopDurationTimer();
+        recordingRef.current = null;
+        return null;
+      } finally {
+        stopPromiseRef.current = null;
+      }
+    };
+
+    stopPromiseRef.current = localStopAction();
+    return stopPromiseRef.current;
   };
+
 
   // ============================================================================
   // CANCEL RECORDING
@@ -538,19 +599,21 @@ export function useVoiceRecording(
     }
 
     isCleaningUpRef.current = true;
-    console.log("🧹 Canceling recording...");
+    console.log(`🧹 [${instanceId}] Canceling recording...`);
 
     try {
       // Clean up recording
       if (recordingRef.current) {
-        await safeCleanupRecording(recordingRef.current);
+        await safeCleanupRecording(recordingRef.current, `cancel-local-${instanceId}`);
         if (globalRecordingInstance === recordingRef.current) {
           globalRecordingInstance = null;
+          globalActiveInstanceId = null;
         }
         recordingRef.current = null;
-      } else if (globalRecordingInstance) {
-        await safeCleanupRecording(globalRecordingInstance);
+      } else if (globalRecordingInstance && globalActiveInstanceId === instanceId) {
+        await safeCleanupRecording(globalRecordingInstance, `cancel-global-${instanceId}`);
         globalRecordingInstance = null;
+        globalActiveInstanceId = null;
       }
 
       // Reset global flag
@@ -581,6 +644,12 @@ export function useVoiceRecording(
     }
   };
 
+  const startRecordingCallback = useCallback(startRecording, [isStarting, isRecording, maxDurationSeconds, startDurationTimer, stopDurationTimer]);
+  const stopRecordingCallback = useCallback(stopRecording, [stopDurationTimer]);
+  const pauseRecordingCallback = useCallback(pauseRecording, [isRecording, isPaused, stopDurationTimer]);
+  const resumeRecordingCallback = useCallback(resumeRecording, [isRecording, isPaused, startDurationTimer]);
+  const cancelRecordingCallback = useCallback(cancelRecording, [stopDurationTimer, isCleaningUpRef]);
+
   // ============================================================================
   // Return
   // ============================================================================
@@ -591,10 +660,10 @@ export function useVoiceRecording(
     duration,
     isStarting,
     nearLimit,
-    startRecording,
-    pauseRecording,
-    resumeRecording,
-    stopRecording,
-    cancelRecording,
+    startRecording: startRecordingCallback,
+    pauseRecording: pauseRecordingCallback,
+    resumeRecording: resumeRecordingCallback,
+    stopRecording: stopRecordingCallback,
+    cancelRecording: cancelRecordingCallback,
   };
 }

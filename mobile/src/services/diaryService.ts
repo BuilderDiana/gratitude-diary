@@ -294,19 +294,16 @@ export async function uploadDiaryImages(
       }
     }
 
-    // Step 2: Prepare images (compress if needed)
-    const preparedImages = await Promise.all(
-      imageUris.map((uri, index) => prepareImageForUpload(uri, index))
-    );
+    // Step 2: Prepare images (compress if needed) - ✅ 关键优化：串行准备，防止内存爆炸
+    const preparedImages = [];
+    for (let i = 0; i < imageUris.length; i++) {
+      console.log(`  📎 正在处理图片 ${i + 1}/${imageUris.length}...`);
+      const prepared = await prepareImageForUpload(imageUris[i], i);
+      preparedImages.push(prepared);
+    }
 
     const fileNames = preparedImages.map((img) => img.fileName);
     const contentTypes = preparedImages.map((img) => img.contentType);
-
-    preparedImages.forEach((img, index) => {
-      console.log(
-        `  📎 准备图片 ${index + 1}/${preparedImages.length}: ${img.fileName} (${img.contentType})`
-      );
-    });
 
     // Step 3: Get presigned URLs from backend
     console.log("📤 Step 1: 获取预签名 URL...");
@@ -330,9 +327,9 @@ export async function uploadDiaryImages(
       if (presignedResponse.status === 401) {
         console.log("🔄 Token 过期，刷新后重试...");
         await refreshAccessToken();
-        token = await getAccessToken();
+        const newToken = await getAccessToken();
 
-        if (!token) {
+        if (!newToken) {
           throw new Error("登录已过期，请重新登录");
         }
 
@@ -342,7 +339,7 @@ export async function uploadDiaryImages(
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${newToken}`,
             },
             body: JSON.stringify({
               file_names: fileNames,
@@ -353,125 +350,77 @@ export async function uploadDiaryImages(
 
         if (!retryResponse.ok) {
           const errorText = await retryResponse.text();
-          throw new Error(
-            `获取预签名 URL 失败: ${retryResponse.status} - ${errorText}`
-          );
+          throw new Error(`获取预签名 URL 失败: ${retryResponse.status} - ${errorText}`);
         }
-
         const retryData = await retryResponse.json();
-        // Continue with retryData below
         const presignedUrls = retryData.presigned_urls;
 
-        // Step 4: Upload each image directly to S3
-        console.log("📤 Step 2: 直接上传到 S3...");
-        const finalUrls: string[] = [];
-
-        for (let i = 0; i < preparedImages.length; i++) {
-          const uri = preparedImages[i].uri;
-          const presignedData = presignedUrls[i];
-
-          console.log(`  📤 上传图片 ${i + 1}/${imageUris.length} 到 S3...`);
-
-          // Read image file
-          const response = await fetch(uri);
-          const blob = await response.blob();
-
-          // Upload to S3 using presigned URL
-          const uploadResponse = await fetch(presignedData.presigned_url, {
-            method: "PUT",
-            headers: {
-              "Content-Type": presignedData.content_type || contentTypes[i],
-            },
-            body: blob,
-          });
-
-          if (!uploadResponse.ok) {
-            throw new Error(
-              `上传图片 ${i + 1} 到 S3 失败: ${uploadResponse.status}`
-            );
-          }
-
-          finalUrls.push(presignedData.final_url);
-          console.log(
-            `  ✅ 图片 ${i + 1} 上传成功: ${presignedData.final_url}`
-          );
-          
-          // ✅ 报告真实进度：每上传完一张图片，更新进度
-          if (onProgress) {
-            const progress = Math.round(((i + 1) / preparedImages.length) * 100);
-            onProgress(progress);
-          }
-        }
-
-        console.log("✅ 所有图片上传成功:", finalUrls);
-        return finalUrls;
+        return await performSequentialUpload(preparedImages, presignedUrls, contentTypes, onProgress);
       }
 
       const errorText = await presignedResponse.text();
-      throw new Error(
-        `获取预签名 URL 失败: ${presignedResponse.status} - ${errorText}`
-      );
+      throw new Error(`获取预签名 URL 失败: ${presignedResponse.status} - ${errorText}`);
     }
 
     const presignedData = await presignedResponse.json();
     const presignedUrls = presignedData.presigned_urls;
-
-    // Step 4: Parallel upload each image directly to S3
-    console.log("📤 Step 2: [并行上传] 直接上传到 S3...");
-    const totalImages = preparedImages.length;
-    let completedUploads = 0; // ✅ 修复变量丢失问题
-
-    const uploadTasks = preparedImages.map(async (prepared, i) => {
-      const uri = prepared.uri;
-      const presignedData = presignedUrls[i];
-      const MAX_RETRIES = 2; // 总共尝试 3 次
-
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          if (attempt > 0) {
-            console.log(`  🔄 图片 ${i + 1} 重试中 (${attempt}/${MAX_RETRIES})...`);
-            // 指数退避延迟
-            await new Promise(r => setTimeout(r, attempt * 1000));
-          }
-
-          const response = await fetch(uri);
-          if (!response.ok) throw new Error(`读取本地文件失败: ${response.status}`);
-          const blob = await response.blob();
-          
-          const uploadResponse = await fetch(presignedData.presigned_url, {
-            method: "PUT",
-            headers: { "Content-Type": contentTypes[i] },
-            body: blob,
-          });
-
-          if (!uploadResponse.ok) {
-            throw new Error(`S3 返回错误: ${uploadResponse.status}`);
-          }
-
-          console.log(`  ✅ 图片 ${i + 1} 上传成功`);
-          
-          if (onProgress) {
-            completedUploads++;
-            const progress = Math.round((completedUploads / totalImages) * 100);
-            onProgress(progress);
-          }
-          
-          return presignedData.final_url;
-        } catch (error: any) {
-          console.error(`  ❌ 图片 ${i + 1} 第 ${attempt + 1} 次尝试失败:`, error.message);
-          if (attempt === MAX_RETRIES) throw error;
-        }
-      }
-    });
-
-    const finalUrls = await Promise.all(uploadTasks as Promise<string>[]);
-
-    console.log("✅ 所有图片上传成功:", finalUrls);
-    return finalUrls;
+    return await performSequentialUpload(preparedImages, presignedUrls, contentTypes, onProgress);
   } catch (error: any) {
     console.error("❌ 上传图片失败:", error);
-    throw new Error(error.message || "上传失败，请重试");
+    throw error; // 抛出原始错误，方便上层处理
   }
+}
+
+/**
+ * 内部辅助函数：执行串行上传（防止内存溢出）
+ */
+async function performSequentialUpload(
+  preparedImages: any[],
+  presignedUrls: any[],
+  contentTypes: string[],
+  onProgress?: (progress: number) => void
+): Promise<string[]> {
+  const finalUrls: string[] = [];
+  const total = preparedImages.length;
+
+  for (let i = 0; i < total; i++) {
+    const prepared = preparedImages[i];
+    const presignedData = presignedUrls[i];
+    const contentType = contentTypes[i];
+    
+    console.log(`📤 正在上传第 ${i + 1}/${total} 张图片...`);
+    
+    const MAX_RETRIES = 2;
+    let localUrl = "";
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(prepared.uri);
+        const blob = await response.blob();
+        
+        const uploadResponse = await fetch(presignedData.presigned_url, {
+          method: "PUT",
+          headers: { "Content-Type": contentType },
+          body: blob,
+        });
+
+        if (!uploadResponse.ok) throw new Error(`S3 Error: ${uploadResponse.status}`);
+
+        localUrl = presignedData.final_url;
+        break; // 成功则跳出重试循环
+      } catch (error) {
+        if (attempt === MAX_RETRIES) throw error;
+        await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
+      }
+    }
+    
+    finalUrls.push(localUrl);
+    if (onProgress) {
+      onProgress(Math.round(((i + 1) / total) * 100));
+    }
+  }
+
+  return finalUrls;
 }
 
 /**
@@ -1065,7 +1014,8 @@ export async function createVoiceDiaryStream(
     // 第4步：轮询查询进度
     return await pollTaskProgress(taskId, headers, onProgress);
   } catch (error: any) {
-    console.error("❌ 创建语音日记失败:", error);
+    // ✅ 生产环境不使用 console.error，避免触发全局错误 Toast
+    console.log("⚠️ 创建语音日记失败:", error);
     
     // ✅ 保留错误信息，帮助用户理解问题
     if (error.message) {
@@ -1088,38 +1038,53 @@ export async function addImagesToTask(
 ): Promise<void> {
   console.log(`📸 补充图片URL到任务 ${taskId}，共 ${imageUrls.length} 张`);
 
-  // ✅ 检查图片URL是否为空
   if (!imageUrls || imageUrls.length === 0) {
     throw new Error("无图片URL：图片上传失败或未选择图片");
   }
 
-  try {
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      throw new Error("未登录");
-    }
+  const MAX_RETRIES = 3;
+  let lastError: any = null;
 
-    const response = await fetch(
-      `${API_BASE_URL}/diary/voice/progress/${taskId}/images`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(imageUrls), // 后端期望接收 List[str]
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error("未登录");
+
+      const response = await fetch(
+        `${API_BASE_URL}/diary/voice/progress/${taskId}/images`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(imageUrls),
+        }
+      );
+
+      if (response.status === 404 && attempt < MAX_RETRIES) {
+        console.warn(`⚠️ 补充图片遇到404 (尝试 ${attempt}/${MAX_RETRIES})，等待重试...`);
+        await new Promise(resolve => setTimeout(resolve, 800 * attempt)); // 递增等待
+        continue;
       }
-    );
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "未知错误");
-      throw new Error(`补充图片URL失败: ${response.status} - ${errorText}`);
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "未知错误");
+        throw new Error(`补充图片URL失败: ${response.status} - ${errorText}`);
+      }
 
-    console.log("✅ 图片URL已补充到任务");
+      console.log("✅ 图片URL已补充到任务");
+      return; // 成功退出
   } catch (error: any) {
-    console.error("❌ 补充图片URL失败:", error);
-    throw error;
+    lastError = error;
+    if (attempt === MAX_RETRIES) break;
+    console.warn(`⚠️ 补充图片尝试 ${attempt} 失败，准备重试:`, error.message);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  if (lastError) {
+    console.warn("ℹ️ 补充图片最终状态：尝试失败，将交由前端补救处理。", lastError.message);
+    throw lastError;
   }
 }
 
@@ -1164,7 +1129,20 @@ export async function pollTaskProgress(
       );
 
       if (response.status === 404) {
-        throw new Error("任务不存在或已过期");
+        const elapsedSinceStart = Date.now() - startTime;
+        
+        // 分布式一致性 Grace Period (前10秒)
+        if (elapsedSinceStart < 10000) {
+          console.warn(`⚠️ 轮询遇到 404 (尝试重连中...) - 已耗时 ${elapsedSinceStart}ms`);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+        
+        // 🚨 关键逻辑：如果轮询了很久突然 404，大概率是后端处理完任务并清理了缓存
+        // 这通常发生在网络抖动或者后端极速完成场景下。
+        // 我们不应该报错，而是尝试通过获取最新的几条日记来检查是否成功。
+        console.log("ℹ️ 任务 ID 已注销，可能已完成处理。");
+        throw new Error("TASK_COMPLETED_OR_EXPIRED"); 
       }
 
       if (!response.ok) {
@@ -1285,6 +1263,7 @@ export async function pollTaskProgress(
         error.message.includes("任务完成") ||
         error.message.includes("任务处理失败") ||
         error.message.includes("任务不存在") ||
+        error.message.includes("TASK_COMPLETED_OR_EXPIRED") ||
         error.message.includes("语音识别失败") ||
         error.message.includes("未识别到有效内容") ||
         error.message.includes("处理失败")

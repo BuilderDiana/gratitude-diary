@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { EmotionType, EMOTION_MAP, DEFAULT_EMOTION } from '../types/emotion';
 import { getFontFamilyForText } from '../styles/typography';
+import { getCurrentLocale } from '../i18n'; // ✅ 导入当前语言
 
 interface EmotionCapsuleProps {
   emotion: string | null | undefined;
@@ -16,10 +17,12 @@ export const EmotionCapsule: React.FC<EmotionCapsuleProps> = ({ emotion, languag
     : DEFAULT_EMOTION;
 
   // 2. 智能语言检测
-  // 优先使用内容检测,如果没有内容则使用language参数
-  let isChinese = (language || 'en').toLowerCase().startsWith('zh');
+  // ✅ 优先使用 i18n 当前语言设置（用于截图时强制显示中文）
+  const currentLocale = getCurrentLocale();
+  let isChinese = currentLocale.toLowerCase().startsWith('zh');
   
-  if (content && content.trim()) {
+  // 如果 i18n 是英文，再根据内容检测
+  if (!isChinese && content && content.trim()) {
     // ✅ 根据内容自动检测语言
     const chineseChars = (content.match(/[\u4e00-\u9fff]/g) || []).length;
     const totalChars = content.length;

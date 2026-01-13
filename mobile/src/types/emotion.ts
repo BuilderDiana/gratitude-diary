@@ -53,9 +53,9 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Fulfilled: {
     labelEn: "Fulfilled",
     labelZh: "充实",
-    color: "#E8DFF5",
+    color: "#FEE7BA",
     darkText: true,
-  }, // ✅ 新增：柔和淡紫
+  }, // ✅ 新增：柔和淡粉黄 (改色自 #E8DFF5)
   Proud: {
     labelEn: "Proud",
     labelZh: "欣慰",
@@ -65,15 +65,15 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Surprised: {
     labelEn: "Surprised",
     labelZh: "惊喜",
-    color: "#FFE8CC",
+    color: "#F3DBFC",
     darkText: true,
-  }, // ✅ 新增：柔和橙色
+  }, // ✅ 新增：柔和淡紫 (改色自 #FFE8CC)
   Excited: {
     labelEn: "Excited",
     labelZh: "期待",
-    color: "#FFDAB3",
+    color: "#FFD5D5",
     darkText: true,
-  }, // ✅ 新增：柔和杏色
+  }, // ✅ 新增：柔和粉红 (改色自 #FFDAB3)
   Peaceful: {
     labelEn: "Peaceful",
     labelZh: "平静",
@@ -83,9 +83,9 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Hopeful: {
     labelEn: "Hopeful",
     labelZh: "希望",
-    color: "#D4EDFF",
+    color: "#CAEED4",
     darkText: true,
-  }, // ✅ 新增：柔和天蓝
+  }, // ✅ 新增：柔和淡绿 (改色自 #D4EDFF)
 
   // 🧘 Neutral/Constructive Emotions (7) - 清新自然的色调
   Thoughtful: {
@@ -115,30 +115,30 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Curious: {
     labelEn: "Curious",
     labelZh: "好奇",
-    color: "#E0F2FF",
+    color: "#D0F4F1",
     darkText: true,
-  }, // ✅ 新增：柔和浅蓝
+  }, // ✅ 新增：柔和青色 (改色自 #E0F2FF)
   Nostalgic: {
     labelEn: "Nostalgic",
     labelZh: "怀念",
-    color: "#F5E6D3",
+    color: "#F0DBC5",
     darkText: true,
-  }, // ✅ 新增：柔和米色
-  Calm: { labelEn: "Calm", labelZh: "淡然", color: "#E8F0E8", darkText: true }, // ✅ 新增：柔和浅绿
+  }, // ✅ 新增：柔和米褐 (改色自 #F5E6D3)
+  Calm: { labelEn: "Calm", labelZh: "淡然", color: "#D1E9FA", darkText: true }, // ✅ 新增：柔和淡蓝 (改色自 #E8F0E8)
 
   // 😔 Negative/Release Emotions (8) - 沉稳柔和的色调
   Uncertain: {
     labelEn: "Uncertain",
     labelZh: "迷茫",
-    color: "#E5E5E5",
+    color: "#E3EDF6",
     darkText: true,
-  }, // ✅ 新增：柔和灰色
+  }, // ✅ 新增：柔和蓝灰 (改色自 #EFE7FB)
   Misunderstood: {
     labelEn: "Misunderstood",
     labelZh: "委屈",
-    color: "#E8D4F0",
+    color: "#EDE6FB",
     darkText: true,
-  }, // ✅ 新增：柔和淡紫
+  }, // ✅ 新增：柔和紫灰 (改色自 #E8D4F0)
   Lonely: {
     labelEn: "Lonely",
     labelZh: "孤独",
@@ -155,9 +155,9 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Overwhelmed: {
     labelEn: "Overwhelmed",
     labelZh: "疲惫",
-    color: "#D9E9FF",
+    color: "#E2E7FB",
     darkText: true,
-  }, // ✅ 新增：柔和天蓝（与Down共享）
+  }, // ✅ 新增：柔和淡紫 (改色自 #D9E9FF)
   Venting: {
     labelEn: "Venting",
     labelZh: "宣泄",
@@ -167,9 +167,9 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Frustrated: {
     labelEn: "Frustrated",
     labelZh: "受挫",
-    color: "#FFCCE0",
+    color: "#FADAD4",
     darkText: true,
-  }, // ✅ 新增：柔和粉色
+  }, // ✅ 新增：柔和淡红 (改色自 #FFCCE0)
 };
 
 // 默认兜底配置

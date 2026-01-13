@@ -173,7 +173,7 @@ export default {
     needMicPermission: "需要麦克风权限",
     micPermissionMessage: "请在设置中允许访问麦克风",
     recordingTooShort: "录音时间太短",
-    recordingTooShortMessage: "请至少录制2秒以上的内容",
+    recordingTooShortMessage: "请至少录制5秒以上的内容",
     recordingTooLong: "录音时间过长",
     recordingTooLongMessage: "请将录音控制在10分钟以内",
     emptyVoiceTitle: "空内容, 请记录有效的信息",
@@ -222,7 +222,8 @@ export default {
     pauseRecording: "已暂停",
     resumeRecording: "继续录音",
     startRecording: "重新录音",
-    shortRecordingHint: "请说一些完整的句子，至少录制3秒",
+    shortRecordingTitle: "内容太短",
+    shortRecordingMessage: "请至少录入5秒以上完整的内容，记录更完整的瞬间。",
     noVoiceDetected:
       "没有听到你的声音，或内容过于简单\n\n请确保:\n• 声音清晰\n• 靠近麦克风\n• 说一些完整的句子",
     placeholderTitle: "起个标题...",
