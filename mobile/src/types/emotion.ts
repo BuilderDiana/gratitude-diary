@@ -130,9 +130,9 @@ export const EMOTION_MAP: Record<EmotionType, EmotionConfig> = {
   Uncertain: {
     labelEn: "Uncertain",
     labelZh: "迷茫",
-    color: "#E3EDF6",
+    color: "#EFE7FB",
     darkText: true,
-  }, // ✅ 新增：柔和蓝灰 (改色自 #EFE7FB)
+  }, // ✅ 新增：柔和蓝灰
   Misunderstood: {
     labelEn: "Misunderstood",
     labelZh: "委屈",
