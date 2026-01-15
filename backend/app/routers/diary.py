@@ -640,9 +640,10 @@ async def process_voice_diary_async(
             transcription = await transcription_task
             update_task_progress(task_id, "processing", 55, 3, "AI润色", "正在美化文字表达...", user_id=user['user_id'])
             
+            # ✅ 合并文字+语音内容
             combined_text = transcription
             if content and content.strip():
-                combined_text = f"{content.strip()}\n{transcription}"
+                combined_text = f"{content.strip()}\\n{transcription}"
             
             polish_result = await openai_service._call_gpt4o_mini_for_polish_and_title(
                 combined_text, 
@@ -652,19 +653,41 @@ async def process_voice_diary_async(
             update_task_progress(task_id, "processing", 70, 3, "AI润色", "润色美化完成", user_id=user['user_id'])
             return transcription, polish_result
 
-        # 定义任务2：暖心反馈 (50% -> 80%) - ✅ 优化版: 流式进度更新
-        async def task_vision_and_feedback():
+        # 🔥 定义任务2：Emotion → Feedback 流水线 (使用新的Agent Orchestration架构)
+        async def task_emotion_and_feedback():
+            """
+            使用Agent Orchestration架构:
+            - 专门的Emotion Agent分析情绪
+            - Feedback Agent基于情绪生成反馈
+            """
             # ✅ 优化1: 提前更新进度
             update_task_progress(task_id, "processing", 55, 3, "准备反馈", "正在预热AI引擎...", user_id=user['user_id'])
             
             transcription = await transcription_task
             
-            # ✅ 优化2: 流式进度更新 (60% → 78%)
-            update_task_progress(task_id, "processing", 60, 3, "生成反馈", "正在感受你的心情...", user_id=user['user_id'])
+            # ✅ 合并文字+语音内容 (确保不丢失用户输入的文字)
+            full_context = content or ""
+            if transcription and transcription.strip():
+                if full_context.strip():
+                    full_context = f"{full_context.strip()}\\n\\n{transcription.strip()}"
+                else:
+                    full_context = transcription.strip()
+            
+            # 🔥 步骤1: 专门的Emotion Agent分析情绪
+            update_task_progress(task_id, "processing", 60, 3, "情绪分析", "正在感受你的心情...", user_id=user['user_id'])
+            emotion_result = await openai_service.analyze_emotion_only(
+                full_context,
+                user_language,
+                None  # 暂不传图片
+            )
+            print(f"   ✅ Emotion Agent完成: {emotion_result.get('emotion')} (置信度: {emotion_result.get('confidence')})")
+            
+            # 🔥 步骤2: Feedback Agent生成反馈 (带流式进度更新)
+            update_task_progress(task_id, "processing", 65, 3, "生成反馈", "正在准备温暖的回应...", user_id=user['user_id'])
             
             # 启动流式进度更新任务
             async def smooth_progress():
-                current_p = 60
+                current_p = 65
                 messages = [
                     "AI正在倾听你的故事...",
                     "理解你的情绪...",
@@ -690,53 +713,39 @@ async def process_voice_diary_async(
             progress_task = asyncio.create_task(smooth_progress())
             
             try:
-                full_context = content or ""
-                if transcription and transcription.strip():
-                    if full_context.strip():
-                        full_context = f"{full_context.strip()}\n\n{transcription.strip()}"
-                    else:
-                        full_context = transcription.strip()
-                
-                feedback = await openai_service._call_gpt4o_mini_for_feedback(
+                feedback_data = await openai_service._call_gpt4o_mini_for_feedback(
                     full_context, 
                     user_language,
                     user_display_name,
-                    None 
+                    None  # 暂不传图片
+                    # TODO: 未来可以传入 emotion_hint=emotion_result
                 )
                 
-                return feedback
+                return emotion_result, feedback_data
             finally:
                 progress_task.cancel()
                 update_task_progress(task_id, "processing", 80, 3, "生成反馈", "反馈准备就绪", user_id=user['user_id'])
 
-        # 并行执行
-        (transcription, polish_result), feedback_data = await asyncio.gather(
+        # 🔥 并行执行: Polish独立 | (Emotion → Feedback) 组内串行
+        (transcription, polish_result), (emotion_result, feedback_data) = await asyncio.gather(
             task_voice_and_polish(),
-            task_vision_and_feedback()
+            task_emotion_and_feedback()
         )
         
-        # 提取反馈内容 (旧逻辑返回 string, 新逻辑返回 dict)
+        # 提取反馈内容
         if isinstance(feedback_data, dict):
             feedback_text = feedback_data.get("reply", "")
-            text_emotion = feedback_data
         else:
-            # 兼容旧代码或其他错误情况
             feedback_text = feedback_data
-            text_emotion = {"emotion": "Reflective", "confidence": 0.0}
-
-        # --------------------------------------------------------
-        # 🔥 Step C: 情绪分析 (Text Optimization)
-        # --------------------------------------------------------
-        update_task_progress(task_id, "processing", 75, 3, "情绪分析", "正在读懂你的心...", user_id=user['user_id'])
         
-        # 直接使用 GPT-4o-mini 的分析结果
+        # ✅ 使用专门Emotion Agent的结果
         emotion_data = {
-            "emotion": text_emotion.get("emotion", "Reflective"),
-            "confidence": text_emotion.get("confidence", 0.0),
-            "rationale": text_emotion.get("rationale", ""),
+            "emotion": emotion_result.get("emotion", "Thoughtful"),
+            "confidence": emotion_result.get("confidence", 0.0),
+            "rationale": emotion_result.get("rationale", ""),
             "source": "text_only",
             "meta": {
-                "text": text_emotion
+                "text": emotion_result
             }
         }
         
@@ -744,7 +753,7 @@ async def process_voice_diary_async(
             "title": polish_result['title'],
             "polished_content": polish_result['polished_content'],
             "feedback": feedback_text,
-            "emotion_data": emotion_data # ✅ 新增
+            "emotion_data": emotion_data  # ✅ 来自专门的Emotion Agent
         }
         
         update_task_progress(task_id, "processing", 70, 3, "AI处理", "全部处理完成", user_id=user['user_id'])
