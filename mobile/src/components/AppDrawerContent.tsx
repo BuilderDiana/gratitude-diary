@@ -377,6 +377,13 @@ export default function AppDrawerContent(props: DrawerContentComponentProps) {
           {t("home.signOut")}
         </Text>
       </TouchableOpacity>
+
+      {/* 版本号显示 - 底部 */}
+      <View style={styles.versionContainer}>
+        <Text style={[styles.versionText, typography.caption]}>
+          Version {require('../../package.json').version}
+        </Text>
+      </View>
     </DrawerContentScrollView>
   );
 }
@@ -435,5 +442,15 @@ const styles = StyleSheet.create({
   },
   loading: {
     marginLeft: 8,
+  },
+  versionContainer: {
+    marginTop: 'auto', // 推到底部
+    paddingTop: 24,
+    paddingBottom: 16,
+    alignItems: 'center',
+  },
+  versionText: {
+    color: '#8A8077',
+    fontSize: 12,
   },
 });
