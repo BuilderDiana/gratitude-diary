@@ -154,6 +154,15 @@ export default {
     deleteAccount: "Delete Account",
   },
 
+  // Search功能
+  search: {
+    placeholder: "Search diaries...",
+    searching: "Searching...",
+    noResults: "No matching diaries found",
+    found: "Found",
+    results: "diaries",
+  },
+
   // 语音日记创建
   createVoiceDiary: {
     title: "Voice Entry",

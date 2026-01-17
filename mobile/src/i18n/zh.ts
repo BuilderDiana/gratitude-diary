@@ -153,6 +153,15 @@ export default {
     deleteAccount: "删除账号",
   },
 
+  // 搜索功能
+  search: {
+    placeholder: "搜索日记...",
+    searching: "搜索中...",
+    noResults: "未找到匹配的日记",
+    found: "找到",
+    results: "条日记",
+  },
+
   // 语音日记创建
   createVoiceDiary: {
     title: "语音记录",
